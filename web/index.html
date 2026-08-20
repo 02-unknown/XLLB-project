@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小笼洛包 1.0</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🎙️</span>
+      <span class="title">小笼洛包 1.0</span>
+    </div>
+    <div class="status-bar" id="status-bar">
+      <span class="badge" id="status-ollama">Ollama · 检测中…</span>
+      <span class="badge" id="status-tts">TTS · 检测中…</span>
+      <span class="badge" id="status-whisper">Whisper · 检测中…</span>
+    </div>
+    <div class="mode-toggle" id="mode-toggle" title="问答模式：按键/文本触发；实时模式：连续聆听">
+      <button class="btn mode-btn active" id="mode-qa" data-mode="qa">💬 问答</button>
+      <button class="btn mode-btn" id="mode-live" data-mode="live">🎙️ 实时</button>
+    </div>
+    <button class="btn ghost" id="btn-settings">⚙️ 设置</button>
+  </header>
+
+  <main class="layout">
+    <!-- 聊天区 -->
+    <section class="chat-pane">
+      <div class="chat-scroll" id="chat-scroll">
+        <div class="chat-inner" id="chat">
+          <div class="welcome">
+            你好，我是你的语音助手。可以直接输入文字，或点击 🎤 用语音对话。
+          </div>
+        </div>
+      </div>
+
+      <!-- 音乐播放条 -->
+      <div class="music-bar hidden" id="music-bar">
+        <div class="music-info">
+          <span class="music-icon">🎵</span>
+          <span class="music-title" id="music-title">音乐</span>
+        </div>
+        <div class="music-controls">
+          <button class="btn icon" id="btn-music-toggle" title="播放/暂停">⏯</button>
+          <button class="btn icon" id="btn-music-stop" title="停止">⏹</button>
+        </div>
+        <audio id="music-audio"></audio>
+      </div>
+
+      <div class="composer">
+        <button class="btn mic" id="btn-mic" title="点击开始/停止录音">🎤</button>
+        <textarea id="input" rows="1" placeholder="输入消息，回车发送…"></textarea>
+        <button class="btn" id="btn-stop-speech" title="停止播放语音">🔇</button>
+        <button class="btn" id="btn-clear" title="清空对话与上下文">🗑️</button>
+        <button class="btn primary" id="btn-send">发送</button>
+      </div>
+    </section>
+
+    <!-- 设置侧栏 -->
+    <aside class="settings-pane hidden" id="settings-pane">
+      <div class="settings-head">
+        <span>设置</span>
+        <button class="btn ghost" id="btn-settings-close">✕</button>
+      </div>
+      <div class="settings-body" id="settings-body">
+
+        <fieldset>
+          <legend>🎭 角色</legend>
+          <div class="row">
+            <label>当前角色</label>
+            <span class="value" id="current-character">—</span>
+          </div>
+          <div class="row">
+            <select id="character-presets"></select>
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="btn-char-default">默认角色</button>
+            <button class="btn" id="btn-char-preset">加载预设</button>
+          </div>
+          <div class="row"><input type="text" id="char-name" placeholder="自定义角色名（可附加括号说明）" /></div>
+          <div class="row"><input type="text" id="char-req" placeholder="自定义要求（可选）" /></div>
+          <div class="row checkbox-row">
+            <label><input type="checkbox" id="char-search" /> 联网搜索角色特点（消耗 1 次额度）</label>
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="btn-char-custom">应用自定义</button>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>🎤 语音预设</legend>
+          <div class="row">
+            <label>当前预设</label>
+            <span class="value" id="current-voice">—</span>
+          </div>
+          <div class="row">
+            <select id="voice-presets"></select>
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="btn-voice-default">默认配置</button>
+            <button class="btn" id="btn-voice-apply">应用预设</button>
+          </div>
+          <div class="row"><input type="text" id="voice-name" placeholder="新预设名称" /></div>
+          <div class="btn-row">
+            <button class="btn" id="btn-voice-create">创建新预设</button>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>🎛️ 影响力范围（1-10）</legend>
+          <div class="row split">
+            <label>最小 <input type="number" id="influence-min" min="1" max="10" /></label>
+            <label>最大 <input type="number" id="influence-max" min="1" max="10" /></label>
+          </div>
+          <div class="btn-row"><button class="btn" id="btn-influence">应用范围</button></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>🔊 音量</legend>
+          <div class="row">
+            <label>对话音量</label>
+            <input type="range" id="tts-volume" min="0" max="1" step="0.05" />
+            <span class="value" id="tts-volume-val">1.0</span>
+          </div>
+          <div class="row">
+            <label>音乐音量</label>
+            <input type="range" id="music-volume" min="0" max="1" step="0.05" />
+            <span class="value" id="music-volume-val">0.7</span>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>🌐 其它开关</legend>
+          <div class="row checkbox-row">
+            <label><input type="checkbox" id="internet-enabled" /> 联网搜索</label>
+          </div>
+          <div class="row checkbox-row">
+            <label><input type="checkbox" id="debug-mode" /> 调试模式</label>
+          </div>
+          <div class="row">
+            <label>Tavily 额度</label>
+            <span class="value" id="usage-info">—</span>
+          </div>
+          <div class="row"><input type="number" id="usage-used" placeholder="重置已用次数" /></div>
+          <div class="btn-row"><button class="btn" id="btn-usage-reset">重置计数</button></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>🗂️ 对话记录</legend>
+          <div class="btn-row">
+            <button class="btn" id="btn-history-refresh">刷新</button>
+            <button class="btn" id="btn-history-save">保存已标记</button>
+            <button class="btn" id="btn-history-latest">保存最新</button>
+            <button class="btn danger" id="btn-history-clear">清空</button>
+          </div>
+          <div class="history-list" id="history-list"></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>🔌 插件管理</legend>
+          <div class="btn-row">
+            <button class="btn" id="btn-plugins-reload">重新加载插件</button>
+          </div>
+          <div class="plugin-list" id="plugin-list"></div>
+        </fieldset>
+
+      </div>
+    </aside>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
