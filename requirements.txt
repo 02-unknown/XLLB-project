@@ -1,0 +1,38 @@
+# =====================================================================
+# 智能语音助手 —— 依赖清单
+# 安装：venv\Scripts\python.exe -m pip install -r requirements.txt
+# （Web 界面本身仅用 Python 标准库，以下为各功能模块的第三方依赖）
+# =====================================================================
+
+# ---------- 核心必需 ----------
+requests>=2.31,<3          # HTTP 客户端（Ollama / GPT-SoVITS / Tavily）
+numpy>=1.26                # 音频数组处理
+faster-whisper>=1.2,<2     # 本地语音识别（自动带入 ctranslate2/tokenizers/av 等）
+yt-dlp>=2024.1.1           # B 站音乐搜索与下载
+
+# ---------- 可选：旧版 CLI（legacy/cli）录音与本地播放 ----------
+sounddevice>=0.4           # 旧版 CLI 麦克风录音
+pygame>=2.5                # 旧版 CLI 本地音频播放
+
+# ---------- 可选：插件 ----------
+psutil>=5.9                # plugins/sysinfo.py 读取 CPU / 内存（缺失则该插件降级）
+
+# =====================================================================
+# 说明
+# ---------------------------------------------------------------------
+# 1) faster-whisper 会自动安装以下依赖，无需手动列出：
+#    ctranslate2、tokenizers、onnxruntime、av、huggingface_hub、pyyaml、tqdm
+#    * GPU 用户可将 onnxruntime 替换为 onnxruntime-gpu。
+#
+# 2) 语音识别模型文件（faster-whisper 格式）需放在 models/whisper 下，
+#    可通过以下命令下载（示例，需联网）：
+#    huggingface-cli download Systran/faster-whisper-small --local-dir models/whisper
+#
+# 3) 语音合成（GPT-SoVITS）运行在独立整合包中（见 launcher_config.json 的
+#    api_script 路径），其依赖由整合包自带的 runtime 环境提供，无需在此安装。
+#
+# 4) 本地大模型由 Ollama 提供（https://ollama.com），安装后：
+#    ollama pull qwen3.5:9b   （模型名可在 core/config.py 修改）
+#
+# 5) 音乐下载转码需要 ffmpeg，路径在 core/config.py 的 FFMPEG_PATH 中配置。
+# =====================================================================

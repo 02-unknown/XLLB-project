@@ -1,0 +1,39 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# ===== 虚拟环境 / 大型运行时 =====
+venv/
+env/
+.gpt_sovits_runtime/
+
+# ===== 本地模型与第三方集成（体积大 / 不随源码分发） =====
+models/
+gpt_sovits/
+CosyVoice/
+voices/
+
+# ===== 个人/敏感数据（请勿上传） =====
+# 语音预设（个人音色、权重）、角色预设（个人设定）
+voice_presets/
+presets/
+# 对话记录、插件状态与设置、额度计数
+save-au/
+save-wo/
+runtime/
+plugins_settings.json
+plugins_state.json
+tavily_usage.json
+memo_notes.json
+
+# ===== 其它 =====
+.tmp/
+.idea/
+.vscode/
+*.log
+*.wav
+*.ckpt
+*.pth
+*.onnx

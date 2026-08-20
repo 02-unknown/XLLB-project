@@ -1,0 +1,20 @@
+{
+  "ollama": {
+    "enabled": true,
+    "command": "ollama",
+    "api_url": "http://localhost:11434",
+    "start_timeout": 30
+  },
+  "gpt_sovits": {
+    "enabled": true,
+    "api_script": "gpt_sovits/api_v2.py",
+    "python": "",
+    "api_url": "http://127.0.0.1:9880",
+    "start_timeout": 60
+  },
+  "web": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "auto_open_browser": true
+  }
+}
