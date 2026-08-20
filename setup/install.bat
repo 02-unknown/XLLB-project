@@ -3,6 +3,7 @@ rem ============================================================
 rem  小笼洛包 1.0 - One-Click Installer
 rem  Runs setup/install.py with a system Python (creates venv
 rem  and installs all missing dependencies automatically).
+rem This version was refactored by bilibili@我叫清少（UID:478929333）
 rem ============================================================
 chcp 65001 >nul
 cd /d "%~dp0"
