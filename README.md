@@ -1,4 +1,4 @@
-# 智能语音助手
+# 小笼洛包
 
 基于本地大语言模型（Ollama）的聊天软件，支持文字 / 语音对话、联网搜索、语音合成（GPT-SoVITS）、
 B 站点歌、角色与语音预设管理、对话记录保存等功能。输入输出界面已统一集成到 **Web UI**。
@@ -159,3 +159,5 @@ venv\Scripts\python.exe -m pip install -r requirements.txt
 - **语音识别失败**：确认 `models/whisper` 模型完整，浏览器已授权麦克风。
 - **联网搜索失败**：检查 `core/config.py` 的 `TAVILY_API_KEY` 与额度。
 - **点歌下载失败**：确认 `ffmpeg` 路径正确且网络可访问 B 站。
+
+qq交流群：743918078
