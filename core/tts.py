@@ -31,7 +31,7 @@ def generate_audio_for_sentence(sentence):
     """调用 GPT-SoVITS API 合成单句音频，返回绝对文件路径。"""
     safe_sentence = safe_for_tts(sentence)
     if not safe_sentence:
-        print(f"⚠️ 句子清洗后为空，跳过合成: {repr(sentence)}")
+        print(f"句子清洗后为空，跳过合成: {repr(sentence)}")
         return None
 
     char_name = re.sub(r'[（(][^）)]*[）)]', '', config.character_name)
@@ -223,7 +223,7 @@ def apply_voice_preset(preset_name, cfg):
     config.CURRENT_VOICE_NAME = preset_name
     config.GPT_WEIGHTS_PATH = cfg.get("gpt_weights", "")
     config.SOVITS_WEIGHTS_PATH = cfg.get("sovits_weights", "")
-    print(f"✅ 已加载语音预设：{preset_name}")
+    print(f"已加载语音预设：{preset_name}")
 
     if config.GPT_WEIGHTS_PATH:
         switch_gpt_weights(config.GPT_WEIGHTS_PATH)
@@ -258,9 +258,9 @@ def switch_gpt_weights(weights_path):
     try:
         resp = requests.get(f"{config.GPT_SOVITS_BASE}/set_gpt_weights?weights_path={abs_path}", timeout=30)
         if resp.status_code == 200:
-            print("✅ GPT 模型已切换")
+            print("GPT 模型已切换")
         else:
-            print(f"❌ GPT 模型切换失败: {resp.text}")
+            print(f"GPT 模型切换失败: {resp.text}")
     except Exception as e:
         print(f"GPT 模型切换出错: {e}")
 
@@ -270,8 +270,8 @@ def switch_sovits_weights(weights_path):
     try:
         resp = requests.get(f"{config.GPT_SOVITS_BASE}/set_sovits_weights?weights_path={abs_path}", timeout=30)
         if resp.status_code == 200:
-            print("✅ SoVITS 模型已切换")
+            print("SoVITS 模型已切换")
         else:
-            print(f"❌ SoVITS 模型切换失败: {resp.text}")
+            print(f"SoVITS 模型切换失败: {resp.text}")
     except Exception as e:
         print(f"SoVITS 模型切换出错: {e}")

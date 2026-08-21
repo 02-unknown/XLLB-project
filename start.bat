@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  Smart Voice Assistant - One-Click Start
+rem  Xiaolongluo 1.1 - One-Click Start
 rem  1) starts Ollama + GPT-SoVITS API (config: launcher_config.json)
 rem  2) preloads Whisper
 rem  3) opens the Web UI in your browser

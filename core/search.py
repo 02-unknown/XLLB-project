@@ -78,7 +78,7 @@ def search_tavily(query, max_retries=2):
             config.tavily_used_count += 1
             save_usage(config.tavily_used_count)
             remaining = config.TAVILY_MONTHLY_LIMIT - config.tavily_used_count
-            print(f"📊 Tavily API 使用：{config.tavily_used_count}/{config.TAVILY_MONTHLY_LIMIT}，剩余 {remaining} 次")
+            print(f"Tavily API 使用：{config.tavily_used_count}/{config.TAVILY_MONTHLY_LIMIT}，剩余 {remaining} 次")
             return data
         except Exception as e:
             print(f"Tavily 请求失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}")
@@ -172,7 +172,7 @@ def get_internet_info(user_text):
         # Tavily：优先使用其 answer 摘要
         data = search_tavily(user_text)
         if data is None:
-            return "⚠️ 网络搜索失败，请稍后重试。"
+            return "网络搜索失败，请稍后重试。"
         if isinstance(data, str):
             return f"Tavily 总结：{data}\n请用中文简洁回答，保持当前角色语气。"
         answer = data.get("answer", "").strip()
@@ -183,7 +183,7 @@ def get_internet_info(user_text):
         results = search_web(user_text, 5)
 
     if not results:
-        return "⚠️ 网络搜索没有返回有效内容。"
+        return "网络搜索没有返回有效内容。"
     info = "以下是从网络上查到的相关信息：\n"
     for i, r in enumerate(results, 1):
         content = (r.get("content") or "").strip()
