@@ -268,9 +268,9 @@ def on_command(command, args, ctx):
 
 def actions():
     return [
-        {"name": "play", "label": "▶ 播放", "desc": "播放 / 继续播放列表"},
-        {"name": "next", "label": "⏭ 下一首", "desc": "跳过当前，播放下一首"},
-        {"name": "clear", "label": "🗑 清空", "desc": "清空播放列表并停止"},
+        {"name": "play", "label": "播放", "desc": "播放 / 继续播放列表"},
+        {"name": "next", "label": "下一首", "desc": "跳过当前，播放下一首"},
+        {"name": "clear", "label": "清空", "desc": "清空播放列表并停止"},
     ]
 
 

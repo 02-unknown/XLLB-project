@@ -1,4 +1,4 @@
-/* 智能语音助手 Web 前端逻辑 */
+/* 小笼洛包 Web 前端逻辑 */
 "use strict";
 
 const $ = (id) => document.getElementById(id);

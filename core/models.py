@@ -22,10 +22,10 @@ def init_models():
             print("加载 Whisper 模型...")
             _model = WhisperModel(WHISPER_MODEL_DIR, device="cpu", compute_type="int8")
             _ready = True
-            print("✅ Whisper 模型已就绪。")
+            print("Whisper 模型已就绪。")
         except Exception as e:  # 模型文件缺失等情况不应导致整个程序崩溃
             _error = str(e)
-            print(f"⚠️ Whisper 模型加载失败（语音识别不可用）: {e}")
+            print(f"Whisper 模型加载失败（语音识别不可用）: {e}")
 
 
 def is_ready():

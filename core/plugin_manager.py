@@ -139,7 +139,7 @@ class PluginManager:
             with open(config.PLUGINS_STATE_FILE, "w", encoding="utf-8") as f:
                 json.dump(self._state, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"⚠️ 保存插件状态失败: {e}")
+            print(f"保存插件状态失败: {e}")
 
     def _load_settings(self):
         try:
@@ -153,7 +153,7 @@ class PluginManager:
             with open(config.PLUGINS_SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"⚠️ 保存插件设置失败: {e}")
+            print(f"保存插件设置失败: {e}")
 
     # ==================== 加载 / 重载 ====================
     def _plugin_files(self):
@@ -167,7 +167,7 @@ class PluginManager:
 
     def _load_module(self, filepath):
         base = os.path.splitext(os.path.basename(filepath))[0]
-        modname = f"_chatbot_plugin_{base}"
+        modname = f"_xllb_plugin_{base}"
         spec = importlib.util.spec_from_file_location(modname, filepath)
         module = importlib.util.module_from_spec(spec)
         sys.modules[modname] = module
@@ -201,9 +201,9 @@ class PluginManager:
             if self.is_enabled(name):
                 self._call(p.module, "on_load", self.get_settings(name), self.ctx)
 
-        print(f"🔌 已加载 {len(self._plugins)} 个插件。")
+        print(f"已加载 {len(self._plugins)} 个插件。")
         if errors:
-            print(f"⚠️ {len(errors)} 个插件加载失败: {errors}")
+            print(f"{len(errors)} 个插件加载失败: {errors}")
         return errors
 
     def reload(self):

@@ -482,7 +482,7 @@ def _serve_static(path):
 
 # ==================== HTTP 处理器 ====================
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ChatbotWebUI/2.0"
+    server_version = "XiaolongluoWebUI/1.1"
 
     def _dispatch(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -533,17 +533,38 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def create_server(host=None, port=None):
+    """创建 HTTP 服务器；端口被占用时自动顺延（最多尝试 10 个端口）。"""
     host = host or config.WEB_HOST
     port = port or config.WEB_PORT
-    return ThreadingHTTPServer((host, port), Handler)
+    last_error = None
+    for candidate in range(port, port + 10):
+        try:
+            return ThreadingHTTPServer((host, candidate), Handler)
+        except OSError as e:
+            last_error = e
+    raise last_error
 
 
-def run(host=None, port=None):
+def serve(host=None, port=None, open_browser=True):
+    """启动 Web 界面：确保目录、创建服务器（端口自动顺延）、打开浏览器并常驻。"""
     config.ensure_dirs()
     _start_cleanup_loop()
     atexit.register(runtime.cleanup_runtime)
-    server = create_server(host, port)
-    print(f"🌐 聊天机器人 Web 界面已启动：http://{server.server_address[0]}:{server.server_address[1]}")
+    try:
+        server = create_server(host, port)
+    except OSError:
+        print("Web 端口（含顺延端口）均被占用，无法启动 Web 界面。")
+        print("请关闭占用端口的程序后重试，或在 launcher_config.json 的 web.port 中更换端口。")
+        raise
+    actual_host, actual_port = server.server_address[0], server.server_address[1]
+    url = f"http://{actual_host}:{actual_port}"
+    print(f"小笼洛包 Web 界面已启动：{url}")
+    if open_browser:
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -551,3 +572,8 @@ def run(host=None, port=None):
     finally:
         server.server_close()
         runtime.cleanup_runtime()
+
+
+def run(host=None, port=None):
+    """兼容入口：不自动打开浏览器。"""
+    serve(host, port, open_browser=False)

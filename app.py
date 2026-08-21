@@ -1,5 +1,5 @@
 # app.py
-# 智能语音助手 —— 统一入口。
+# 小笼洛包 —— 统一入口。
 # 启动本地 Web 界面（默认 http://127.0.0.1:8000）。
 #
 # 用法：
@@ -21,7 +21,7 @@ from web.server import run
 
 
 def main():
-    parser = argparse.ArgumentParser(description="智能语音助手 Web 界面")
+    parser = argparse.ArgumentParser(description="小笼洛包 Web 界面")
     parser.add_argument("--host", default=None, help="监听地址")
     parser.add_argument("--port", type=int, default=None, help="监听端口")
     args = parser.parse_args()
@@ -35,21 +35,21 @@ def main():
     port = args.port or config.WEB_PORT
 
     print("=" * 40)
-    print("小笼洛包 1.0")
+    print("小笼洛包 1.1")
     print("=" * 40)
 
     # 依赖探测（不阻塞，仅提示）
     print("检查 Ollama 服务...")
     if llm.check_ollama():
-        print("✅ Ollama 服务已就绪。")
+        print("Ollama 服务已就绪。")
     else:
-        print("⚠️ 未检测到 Ollama 服务，请确认已运行 `ollama serve` 并拉取模型。")
+        print("未检测到 Ollama 服务，请确认已运行 `ollama serve` 并拉取模型。")
 
     print("检查 GPT-SoVITS API...")
     if tts.check_tts_api():
-        print("✅ GPT-SoVITS API 已就绪。")
+        print("GPT-SoVITS API 已就绪。")
     else:
-        print("⚠️ GPT-SoVITS API 未就绪，语音合成将不可用（文字对话仍可用）。")
+        print("GPT-SoVITS API 未就绪，语音合成将不可用（文字对话仍可用）。")
 
     # 后台预热 Whisper 模型（失败也不影响启动）
     try:

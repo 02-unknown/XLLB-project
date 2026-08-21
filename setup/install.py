@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# setup/install.py —— 小笼洛包 1.0 安装部署程序（可反复运行，用于补装缺失组件）。
+# setup/install.py —— 小笼洛包 1.1 安装部署程序（可反复运行，用于补装缺失组件）。
 # 功能：
 #   0) 本地大模型 Ollama（可选：不装则只能通过外部 API 调用大模型）；
 #   1) 检查并安装 Python 依赖（优先使用项目 venv）；
@@ -136,8 +136,8 @@ def install_deps(python):
         return False
     print("  安装 Python 依赖 ...")
     print(f"  使用解释器：{python}")
-    run([python, "-m", "pip", "install", "--upgrade", "pip"])
-    run([python, "-m", "pip", "install", "-r", REQ_FILE])
+    run([python, "-m", "pip", "install", "--upgrade", "pip", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"])
+    run([python, "-m", "pip", "install", "-r", REQ_FILE, "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"])
     print("  [OK] 依赖安装完成。")
     return True
 
@@ -158,7 +158,7 @@ def install_whisper(python):
     try:
         code = (
             "from huggingface_hub import snapshot_download; "
-            f"snapshot_download('Systran/faster-whisper-small', local_dir={WHISPER_DIR!r})"
+            f"snapshot_download('Systran/faster-whisper-small', local_dir={WHISPER_DIR!r}, endpoint='https://hf-mirror.com')"
         )
         run([python, "-c", code])
         if check_whisper_installed():
@@ -220,7 +220,7 @@ def module_ollama():
         import urllib.request
         exe = os.path.join(os.environ.get("TEMP", "."), "OllamaSetup.exe")
         print("  正在下载 Ollama 安装包（约 1GB，需联网）...")
-        urllib.request.urlretrieve("https://ollama.com/download/OllamaSetup.exe", exe)
+        urllib.request.urlretrieve("https://gh-proxy.org/https://github.com/ollama/ollama/releases/download/v0.32.14/OllamaSetup.exe", exe)
         subprocess.check_call([exe, "/VERYSILENT", "/NORESTART"], timeout=900)
         if find_ollama():
             print("  [OK] Ollama 安装成功。")
@@ -278,7 +278,7 @@ def module_tts():
         print("  [OK] GPT-SoVITS API 脚本已找到：")
         print("       ", api_script)
         gs_dir = os.path.dirname(api_script)
-        missing_tools = [m for m in ("audio_sr", "AP_BWE_main", "i18n")
+        missing_tools = [m for m in ("audio_sr.py", "AP_BWE_main", "i18n")
                          if not os.path.exists(os.path.join(gs_dir, "tools", m))]
         if missing_tools:
             print("[警告] GPT-SoVITS 的 tools 目录不完整，缺少：", ", ".join(missing_tools))
@@ -310,7 +310,7 @@ def module_ffmpeg():
 
 def main():
     print("=" * 52)
-    print("  小笼洛包 1.0 · 安装部署")
+    print("  小笼洛包 1.1 · 安装部署")
     print("=" * 52)
     print(f"项目根目录：{PROJECT_ROOT}")
 

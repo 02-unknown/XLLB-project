@@ -62,7 +62,7 @@ FFMPEG_PATH = os.path.join(PROJECT_ROOT, "ffmpeg", "bin", "ffmpeg.exe")
 
 # 联网搜索（可通过“联网搜索设置”插件在 WebUI 配置）
 SEARCH_PROVIDER = "tavily"      # tavily | bing（不推荐，无需Key） | custom
-TAVILY_API_KEY = ""             # ★ 请填写你自己的 Tavily API Key（或在 WebUI“联网搜索设置”中配置）
+TAVILY_API_KEY = ""             # 请填写你自己的 Tavily API Key（或在 WebUI“联网搜索设置”中配置）
 TAVILY_MONTHLY_LIMIT = 1000
 SEARCH_CUSTOM_URL = ""          # 自定义搜索 API 地址（如 https://api.example.com/search）
 SEARCH_CUSTOM_KEY = ""          # 自定义搜索 API Key（可选）
