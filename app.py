@@ -35,7 +35,7 @@ def main():
     port = args.port or config.WEB_PORT
 
     print("=" * 40)
-    print("小笼洛包 1.1")
+    print("小笼洛包 1.3")
     print("=" * 40)
 
     # 依赖探测（不阻塞，仅提示）

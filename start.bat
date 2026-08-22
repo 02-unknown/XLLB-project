@@ -1,13 +1,13 @@
 @echo off
 rem ============================================================
-rem  Xiaolongluo 1.1 - One-Click Start
+rem  Xiaolongluo 1.3 - One-Click Start
 rem  1) starts Ollama + GPT-SoVITS API (config: launcher_config.json)
 rem  2) preloads Whisper
 rem  3) opens the Web UI in your browser
 rem ============================================================
 chcp 65001 >nul
 cd /d "%~dp0"
-title Xiaolongluo 1.1 - Keep this window open
+title Xiaolongluo 1.3 - Keep this window open
 
 set "PY=venv\Scripts\python.exe"
 if not exist "%PY%" (

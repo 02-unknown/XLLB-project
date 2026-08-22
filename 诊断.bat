@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  Xiaolongluo 1.1 - Environment Diagnostics
+rem  Xiaolongluo 1.3 - Environment Diagnostics
 rem  Runs setup/diagnose.py to find out why the Web UI cannot
 rem  be opened. Read-only: only checks and reports, changes nothing.
 rem ============================================================

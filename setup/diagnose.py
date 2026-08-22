@@ -173,7 +173,26 @@ def main():
                    "未找到可用系统 Python 且包内无 gpt_sovits 运行时；"
                    "请安装 Python 3.9+（勾选 Add to PATH）后运行 setup\\install.bat")
 
-    # 7. 汇总
+    # 7. 桌面版窗口组件（pywebview，可选；未安装时桌面版自动使用 Edge/Chrome 应用模式窗口）
+    print("\n--- 7. 桌面版窗口组件（pywebview，可选） ---")
+    ver = sys.version_info
+    ver_str = f"{ver.major}.{ver.minor}"
+    if ver >= (3, 13):
+        report("pywebview（内嵌窗口）", True,
+               f"【webview 兼容性提示】当前 Python {ver_str}（3.13+）与 pywebview/pythonnet 不兼容，"
+               "内嵌窗口不可用（安装程序已自动跳过）；"
+               "桌面版将改用 Edge/Chrome 应用模式窗口，功能不受影响")
+    else:
+        try:
+            import webview
+            report("pywebview（内嵌窗口）", True,
+                   f"已安装（Python {ver_str}），桌面版将使用内嵌窗口")
+        except Exception:
+            report("pywebview（内嵌窗口）", False,
+                   "未安装（Python 3.13 以下本应随 install.bat 自动安装，可重跑 setup\\install.bat 补装）；"
+                   "桌面版将使用 Edge/Chrome 应用模式窗口，不影响使用")
+
+    # 8. 汇总
     print("\n" + "=" * 56)
     failed = [r for r in RESULTS if not r[1]]
     if not failed:

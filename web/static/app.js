@@ -19,8 +19,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function refreshStatus() {
   try {
     const s = await api("/api/status");
-    const modelLabel = `${s.llm_backend} · ${s.llm_model || "未配置"}`;
-    setBadge("status-ollama", s.llm_ready, "模型 · " + modelLabel);
+    // 模型徽章：按实际后端显示（Ollama / 外部API），不再无条件显示 Ollama 状态
+    const backendLabel = s.llm_backend === "ollama" ? "Ollama" : "外部API";
+    setBadge("status-model", s.llm_ready, `模型 · ${backendLabel} · ${s.llm_model || "未配置"}`);
+    setBadge("status-mode", true, s.app_mode === "lite" ? "模式 · Lite（仅外部API）" : "模式 · 标准");
     setBadge("status-tts", s.tts_api_ready, s.tts_api_ready ? "TTS · 就绪" : "TTS · 未就绪");
     setBadge("status-whisper", s.whisper_ready, s.whisper_ready ? "Whisper · 就绪" : "Whisper · 未加载");
     return s.settings;

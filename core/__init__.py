@@ -25,4 +25,4 @@ for _stream in (sys.stdout, sys.stderr):
 #   runtime        —— 运行时缓存清理
 #   plugin_manager —— 插件系统（动态加载 / 启停 / 热重载）
 
-__version__ = "1.1.0"
+__version__ = "1.3.0"

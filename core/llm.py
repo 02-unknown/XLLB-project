@@ -21,6 +21,16 @@ def check_ollama():
     return bool(list_ollama_models())
 
 
+def ollama_used():
+    """Ollama 是否被当前配置实际使用（生成或判断后端任一为 ollama）。
+
+    Lite 模式强制使用外部 API 后，即使本机 Ollama 服务在运行，
+    也不应把 Ollama 视为"可用"或展示其模型列表。
+    """
+    return (config.LLM_CHAT_BACKEND == "ollama"
+            or config.LLM_JUDGE_BACKEND == "ollama")
+
+
 def _backend_ready(backend):
     if backend == "openai":
         key = config.LLM_API_KEY or os.environ.get("OPENAI_API_KEY", "")
