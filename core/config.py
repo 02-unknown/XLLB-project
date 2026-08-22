@@ -85,7 +85,7 @@ SEARCH_TRIGGER_PHRASES = [
 
 # ========== Web 服务 ==========
 WEB_HOST = "127.0.0.1"
-WEB_PORT = 8000
+WEB_PORT = 10999
 
 # ========== 全局运行时状态 ==========
 DEBUG_MODE = False

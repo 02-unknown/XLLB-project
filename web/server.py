@@ -4,10 +4,12 @@ import atexit
 import json
 import mimetypes
 import os
+import random
 import threading
 import time
 import traceback
 import urllib.parse
+import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -532,39 +534,95 @@ class Handler(BaseHTTPRequestHandler):
         pass  # 静默默认访问日志，避免刷屏
 
 
+class _NoReuseServer(ThreadingHTTPServer):
+    """关闭 SO_REUSEADDR：Windows 下复用地址会导致同一端口被重复绑定，
+    使端口冲突检测与顺延失效（两个实例抢占同一端口）。"""
+
+    allow_reuse_address = False
+
+
 def create_server(host=None, port=None):
-    """创建 HTTP 服务器；端口被占用时自动顺延（最多尝试 10 个端口）。"""
+    """创建 HTTP 服务器（端口策略：默认端口 -> 随机端口 -> 系统分配）。
+
+    优先绑定默认端口（10999）；若被占用，则依次尝试随机高位端口；
+    随机端口也全部失败时，绑定 0 让操作系统分配一个保证空闲的端口。
+    始终返回实际绑定的服务器，实际端口见 server.server_address[1]。
+    """
     host = host or config.WEB_HOST
     port = port or config.WEB_PORT
+    candidates = [port]
+    for _ in range(3):
+        candidates.append(random.randint(20000, 60000))
+    candidates.append(0)  # 由操作系统分配空闲端口（保证成功）
     last_error = None
-    for candidate in range(port, port + 10):
+    for candidate in candidates:
         try:
-            return ThreadingHTTPServer((host, candidate), Handler)
+            return _NoReuseServer((host, candidate), Handler)
         except OSError as e:
             last_error = e
     raise last_error
 
 
-def serve(host=None, port=None, open_browser=True):
-    """启动 Web 界面：确保目录、创建服务器（端口自动顺延）、打开浏览器并常驻。"""
+def serve(host=None, port=None, open_browser=True, on_ready=None):
+    """启动 Web 界面：确保目录、创建服务器（端口被占时改用随机端口）、自检并打开界面。
+
+    on_ready: 可选回调，服务绑定并自检通过后以实际地址调用（桌面版窗口用）。
+    """
     config.ensure_dirs()
     _start_cleanup_loop()
     atexit.register(runtime.cleanup_runtime)
+    host = host or config.WEB_HOST
+    port = port or config.WEB_PORT
+
+    # 若目标端口上已有本程序的服务在运行，则直接打开浏览器/窗口，不重复启动
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/", timeout=2) as resp:
+            if resp.status == 200:
+                url = f"http://{host}:{port}"
+                print(f"检测到 Web 界面已在运行：{url}（不重复启动）。")
+                if on_ready is not None:
+                    on_ready(url)
+                elif open_browser:
+                    try:
+                        import webbrowser
+                        webbrowser.open(url)
+                    except Exception:
+                        pass
+                return
+    except Exception:
+        pass
+
     try:
         server = create_server(host, port)
     except OSError:
-        print("Web 端口（含顺延端口）均被占用，无法启动 Web 界面。")
+        print("Web 端口（含随机兜底端口）均无法绑定，无法启动 Web 界面。")
         print("请关闭占用端口的程序后重试，或在 launcher_config.json 的 web.port 中更换端口。")
         raise
     actual_host, actual_port = server.server_address[0], server.server_address[1]
     url = f"http://{actual_host}:{actual_port}"
+    if actual_port != port:
+        print(f"端口 {port} 已被占用，已改用端口 {actual_port}。")
     print(f"小笼洛包 Web 界面已启动：{url}")
-    if open_browser:
+
+    def _bootstrap():
+        # 等服务开始接受请求后：本地自检 + 打开浏览器 / 通知就绪
+        time.sleep(0.3)
         try:
-            import webbrowser
-            webbrowser.open(url)
-        except Exception:
-            pass
+            with urllib.request.urlopen(url, timeout=3) as resp:
+                print(f"本地访问自检：HTTP {resp.status}，访问正常。")
+        except Exception as e:
+            print(f"本地访问自检失败：{e}")
+            print("提示：若浏览器仍无法打开，请运行 setup\\诊断.bat 检查环境（代理/防火墙/端口占用）。")
+        if on_ready is not None:
+            on_ready(url)
+        elif open_browser:
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception:
+                pass
+
+    threading.Thread(target=_bootstrap, daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

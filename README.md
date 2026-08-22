@@ -53,7 +53,19 @@ Chat-bot/
 venv\Scripts\python.exe launcher.py
 ```
 
-它会自动：启动 Ollama → 启动 GPT-SoVITS API → 预加载 Whisper → 打开浏览器进入 Web 界面。
+启动时依次选择：
+
+1. **界面方式**：
+   - `1. 桌面版`：内嵌窗口显示界面（推荐；需已安装 pywebview，
+     安装命令：`venv\Scripts\python.exe -m pip install pywebview`，未安装时自动改用浏览器）；
+   - `2. 网页版`：使用浏览器打开界面。
+2. **运行模式**：
+   - `1. Lite 模式`：仅加载语音合成（GPT-SoVITS），大模型只能使用外部 API
+     （不启动 Ollama、不加载 Whisper）；
+   - `2. 标准模式`：启动全部服务（Ollama + GPT-SoVITS + Whisper）。
+
+桌面版会等待 Web 服务就绪后再打开窗口；端口被占用时自动顺延，窗口始终指向
+实际可用地址，不会出现"无法访问"的情况。
 
 > 首次使用请先编辑 `launcher_config.json`，把 `gpt_sovits.api_script` 改成你自己的
 > `api_v2.py` 路径（默认已填入示例路径），并按需调整端口 / 地址。

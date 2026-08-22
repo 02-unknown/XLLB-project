@@ -38,7 +38,7 @@ DEFAULTS = {
     },
     "web": {
         "host": "127.0.0.1",
-        "port": 8000,
+        "port": 10999,
         "auto_open_browser": True,
     },
 }
