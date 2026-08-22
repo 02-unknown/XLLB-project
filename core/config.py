@@ -88,6 +88,7 @@ WEB_HOST = "127.0.0.1"
 WEB_PORT = 10999
 
 # ========== 全局运行时状态 ==========
+APP_MODE = "standard"       # 运行模式：standard（全部服务）/ lite（仅语音合成 + 外部 API）
 DEBUG_MODE = False
 tts_volume = 1.0
 music_volume = 0.7

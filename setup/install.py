@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# setup/install.py —— 小笼洛包 1.1 安装部署程序（可反复运行，用于补装缺失组件）。
+# setup/install.py —— 小笼洛包 1.3 安装部署程序（可反复运行，用于补装缺失组件）。
 # 功能：
 #   0) 本地大模型 Ollama（可选：不装则只能通过外部 API 调用大模型）；
 #   1) 检查并安装 Python 依赖（优先使用项目 venv）；
@@ -138,6 +138,20 @@ def install_deps(python):
     print(f"  使用解释器：{python}")
     run([python, "-m", "pip", "install", "--upgrade", "pip", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"])
     run([python, "-m", "pip", "install", "-r", REQ_FILE, "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"])
+    # 桌面版内嵌窗口组件（pywebview）：依赖 pythonnet，Python 3.13+ 上无法初始化，
+    # requirements.txt 已用版本标记在 3.13+ 自动跳过；此处给出明确提示。
+    try:
+        ver = subprocess.check_output(
+            [python, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            timeout=10, text=True).strip()
+        major, minor = (int(x) for x in ver.split("."))
+        if (major, minor) >= (3, 13):
+            print(f"  [提示] 当前 Python {ver}（3.13+）：pythonnet/pywebview 无法初始化，")
+            print("         已跳过桌面版内嵌窗口组件；桌面版将使用 Edge/Chrome 应用模式窗口（不影响使用）。")
+        else:
+            print(f"  [OK] 当前 Python {ver}：已安装桌面版内嵌窗口组件（pywebview），桌面版将使用内嵌窗口。")
+    except Exception:
+        pass
     print("  [OK] 依赖安装完成。")
     return True
 
@@ -310,7 +324,7 @@ def module_ffmpeg():
 
 def main():
     print("=" * 52)
-    print("  小笼洛包 1.1 · 安装部署")
+    print("  小笼洛包 1.3 · 安装部署")
     print("=" * 52)
     print(f"项目根目录：{PROJECT_ROOT}")
 

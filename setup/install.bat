@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  Xiaolongluo 1.1 - One-Click Installer
+rem  Xiaolongluo 1.3 - One-Click Installer
 rem  Runs setup/install.py with a usable Python (project venv,
 rem  system Python, or the bundled gpt_sovits runtime).
 rem  Creates the venv and installs missing components.

@@ -25,6 +25,7 @@ from core import (
     storage,
     runtime,
     plugin_manager,
+    logger,
 )
 
 WEB_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -118,7 +119,10 @@ def _status_snapshot():
     return {
         "llm_ready": llm.check_backend(),
         "judge_ready": llm.check_judge_backend(),
-        "ollama_ready": llm.check_ollama(),
+        # Ollama 状态必须反映"实际使用"：仅当生成/判断后端为 ollama 且服务可用时才为真
+        "ollama_used": llm.ollama_used(),
+        "ollama_ready": llm.ollama_used() and llm.check_ollama(),
+        "app_mode": config.APP_MODE,
         "llm_backend": config.LLM_CHAT_BACKEND,
         "llm_judge_backend": config.LLM_JUDGE_BACKEND,
         "llm_model": config.LLM_CHAT_MODEL,
@@ -409,13 +413,15 @@ def _api_models_get(_req):
         and config.LLM_JUDGE_BACKEND == "ollama"
         and config.LLM_CHAT_MODEL == config.LLM_JUDGE_MODEL
     )
+    # 仅当实际使用 Ollama 时才返回其模型列表（Lite 模式/外部 API 下返回空，
+    # 避免界面显示本机 Ollama 模型名造成误导）
     return _ok(
         chat_backend=config.LLM_CHAT_BACKEND,
         judge_backend=config.LLM_JUDGE_BACKEND,
         chat_model=config.LLM_CHAT_MODEL,
         judge_model=config.LLM_JUDGE_MODEL,
         shared=shared,
-        ollama_models=llm.list_ollama_models(),
+        ollama_models=llm.list_ollama_models() if llm.ollama_used() else [],
     )
 
 
@@ -484,7 +490,7 @@ def _serve_static(path):
 
 # ==================== HTTP 处理器 ====================
 class Handler(BaseHTTPRequestHandler):
-    server_version = "XiaolongluoWebUI/1.1"
+    server_version = "XiaolongluoWebUI/1.3"
 
     def _dispatch(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -507,6 +513,10 @@ class Handler(BaseHTTPRequestHandler):
                 return handler(req)
             except Exception as e:
                 traceback.print_exc()
+                try:
+                    logger.error(f"API 接口异常 [{self.command} {path}]：{e}\n{traceback.format_exc()}")
+                except Exception:
+                    pass
                 return _error(f"服务器内部错误: {e}", 500)
 
         # 静态文件
@@ -571,6 +581,7 @@ def serve(host=None, port=None, open_browser=True, on_ready=None):
     config.ensure_dirs()
     _start_cleanup_loop()
     atexit.register(runtime.cleanup_runtime)
+    logger.init_log(os.path.join(config.RUNTIME_DIR, "logs"))
     host = host or config.WEB_HOST
     port = port or config.WEB_PORT
 
@@ -602,7 +613,9 @@ def serve(host=None, port=None, open_browser=True, on_ready=None):
     url = f"http://{actual_host}:{actual_port}"
     if actual_port != port:
         print(f"端口 {port} 已被占用，已改用端口 {actual_port}。")
+        logger.warn(f"端口 {port} 已被占用，已改用端口 {actual_port}")
     print(f"小笼洛包 Web 界面已启动：{url}")
+    logger.info(f"Web 界面已启动：{url}")
 
     def _bootstrap():
         # 等服务开始接受请求后：本地自检 + 打开浏览器 / 通知就绪
@@ -610,9 +623,11 @@ def serve(host=None, port=None, open_browser=True, on_ready=None):
         try:
             with urllib.request.urlopen(url, timeout=3) as resp:
                 print(f"本地访问自检：HTTP {resp.status}，访问正常。")
+                logger.info(f"本地访问自检：HTTP {resp.status}")
         except Exception as e:
             print(f"本地访问自检失败：{e}")
             print("提示：若浏览器仍无法打开，请运行 setup\\诊断.bat 检查环境（代理/防火墙/端口占用）。")
+            logger.error(f"本地访问自检失败：{e}")
         if on_ready is not None:
             on_ready(url)
         elif open_browser:
