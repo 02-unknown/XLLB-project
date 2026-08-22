@@ -7,6 +7,7 @@ rem  3) opens the Web UI in your browser
 rem ============================================================
 chcp 65001 >nul
 cd /d "%~dp0"
+title Xiaolongluo 1.1 - Keep this window open
 
 set "PY=venv\Scripts\python.exe"
 if not exist "%PY%" (
@@ -17,6 +18,7 @@ if not exist "%PY%" (
 )
 
 echo [One-Click Start] Launching...
+echo Keep this window open while using the Web UI.
 "%PY%" launcher.py
 set "RC=%ERRORLEVEL%"
 echo.
