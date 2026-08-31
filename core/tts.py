@@ -275,3 +275,55 @@ def switch_sovits_weights(weights_path):
             print(f"SoVITS 模型切换失败: {resp.text}")
     except Exception as e:
         print(f"SoVITS 模型切换出错: {e}")
+
+
+# ==================== 服务器默认权重 ====================
+_default_weights_cache = {"gpt": None, "sovits": None, "checked": False}
+
+
+def _parse_tts_infer_defaults(yaml_path):
+    """简易解析 tts_infer.yaml：读取 custom 段的 t2s/vits 权重路径。
+
+    该段即 GPT-SoVITS 服务器启动时实际加载的默认权重。
+    """
+    gpt = sovits = None
+    section = None
+    try:
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                indent = len(line) - len(line.lstrip(" "))
+                if indent == 0 and stripped.endswith(":"):
+                    section = stripped[:-1]
+                    continue
+                if indent > 0 and section == "custom":
+                    if stripped.startswith("t2s_weights_path:"):
+                        gpt = stripped.split(":", 1)[1].strip().strip('"\'')
+                    elif stripped.startswith("vits_weights_path:"):
+                        sovits = stripped.split(":", 1)[1].strip().strip('"\'')
+    except Exception:
+        pass
+    return gpt, sovits
+
+
+def server_default_weights():
+    """读取 GPT-SoVITS 服务器启动时加载的默认权重路径。
+
+    返回 (gpt_weights, sovits_weights)；无法确定时返回 (None, None)。
+    结果进程内缓存（服务器运行期间不会变化）。
+    """
+    if _default_weights_cache["checked"]:
+        return _default_weights_cache["gpt"], _default_weights_cache["sovits"]
+    gpt = sovits = None
+    try:
+        yaml_path = os.path.join(config.PROJECT_ROOT, "gpt_sovits", "GPT_SoVITS", "configs", "tts_infer.yaml")
+        if not os.path.isfile(yaml_path):
+            yaml_path = os.path.join(config.PROJECT_ROOT, "GPT_SoVITS", "configs", "tts_infer.yaml")
+        if os.path.isfile(yaml_path):
+            gpt, sovits = _parse_tts_infer_defaults(yaml_path)
+    except Exception:
+        pass
+    _default_weights_cache.update(gpt=gpt, sovits=sovits, checked=True)
+    return gpt, sovits

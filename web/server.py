@@ -407,6 +407,220 @@ def _api_plugins_state(req):
     return _ok(state=plugin_manager.manager.get_state(name))
 
 
+# ==================== 记忆管理页面（查看 / 查询 / 编辑 / 增删） ====================
+def _memory_engine():
+    """惰性获取记忆引擎（不可用时返回 None）。"""
+    try:
+        from memory_engine import get_engine
+        eng = get_engine()
+        if not eng.is_ready():
+            eng.init()
+        return eng if eng.is_ready() else None
+    except Exception:
+        return None
+
+
+def _parse_view_date(s):
+    """解析日期筛选 / 录入：YYYY / YYYY-MM / YYYY-MM-DD → (start_ts, end_ts, year, quarter) 或 None。"""
+    s = (s or "").strip()
+    if not s:
+        return None
+    import re as _re
+    m = _re.fullmatch(r"(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?", s)
+    if not m:
+        return None
+    from datetime import datetime as _dt
+    y = int(m.group(1))
+    mo = int(m.group(2)) if m.group(2) else None
+    d = int(m.group(3)) if m.group(3) else None
+    if d is not None:
+        start = _dt(y, mo, d)
+        return start.timestamp(), start.timestamp() + 86400, y, f"Q{(mo - 1) // 3 + 1}"
+    if mo is not None:
+        start = _dt(y, mo, 1)
+        end = _dt(y + (1 if mo == 12 else 0), (1 if mo == 12 else mo + 1), 1)
+        return start.timestamp(), end.timestamp(), y, f"Q{(mo - 1) // 3 + 1}"
+    return _dt(y, 1, 1).timestamp(), _dt(y + 1, 1, 1).timestamp(), y, None
+
+
+def _validate_memory_entry(data):
+    """校验记忆条目（标准格式）。返回 (ok, 错误信息, 规整字段或 None)。
+
+    标准格式：时间 YYYY[-MM[-DD]]；参与者用中文顿号/逗号分隔；主题可选（标准主题或留空自动归类）；内容 2~1000 字。
+    """
+    import re as _re
+    from memory_engine.preprocessing import TOPIC_NAMES
+    date = str(data.get("date") or "").strip()
+    participants = str(data.get("participants") or "").strip()
+    content = str(data.get("content") or "").strip()
+    topic = str(data.get("topic") or "").strip()
+    if not _re.fullmatch(r"\d{4}(?:-\d{1,2}(?:-\d{1,2})?)?", date):
+        return False, "时间格式不正确：请使用 2026 或 2026-08 或 2026-08-27 的形式。", None
+    parts = [p.strip() for p in _re.split(r"[、,，]", participants) if p.strip()]
+    if not parts:
+        return False, "参与者不能为空：请用中文顿号分隔，如：洛天依、洛天依（朋友）。", None
+    if len(content) < 2 or len(content) > 1000:
+        return False, "内容长度需在 2~1000 字之间。", None
+    if topic and topic not in TOPIC_NAMES:
+        return False, ("主题不在标准范围内（可选：%s；或留空自动归类）。" % "、".join(TOPIC_NAMES)), None
+    d = _parse_view_date(date)
+    return True, "", {
+        "ts": d[0], "year": d[2], "quarter": d[3],
+        "participants": parts, "topic": topic, "content": content,
+    }
+
+
+def _api_memory_view(req):
+    eng = _memory_engine()
+    if eng is None:
+        return _error("记忆库不可用（请先启用「上下文记忆库」插件）")
+    from memory_engine import roles
+    from memory_engine.preprocessing import TOPIC_NAMES
+    q = (req.get("query", {}).get("q") or [""])[0].strip()
+    drange = _parse_view_date((req.get("query", {}).get("date") or [""])[0])
+
+    def _match(frag):
+        if q and q not in (frag.get("searchable_text") or "") and q not in (frag.get("full_summary") or ""):
+            return False
+        if drange:
+            ts = frag.get("ts") or 0
+            if not (drange[0] <= ts < drange[1]):
+                return False
+        return True
+
+    active, archive = [], []
+    for db, out in ((eng.active, active), (eng.archive_db, archive)):
+        if db is None:
+            continue
+        for r in db.iter_rows():
+            if not _match(r):
+                continue
+            out.append({
+                "id": r["id"], "year": r["year"], "quarter": r["quarter"],
+                "topic": r["topic"], "ts": r["ts"],
+                "participants": roles.render_list(json.loads(r["participants"] or "[]"), eng.char_name),
+                "summary": roles.render(r.get("full_summary") or "", eng.char_name),
+                "searchable": roles.render((r.get("searchable_text") or "")[:200], eng.char_name),
+            })
+    l0 = []
+    if eng.l0:
+        for t in eng.l0.get_recent(eng.l0.max_entries):
+            c = t.get("content") or ""
+            if q and q not in c:
+                continue
+            l0.append({"role": t.get("role"), "content": c, "ts": t.get("ts")})
+    l1 = {"size": eng.l1.size() if eng.l1 else 0, "stats": eng.l1.stats() if eng.l1 else {}}
+    cold = []
+    if eng.cold:
+        for p in eng.cold.partitions():
+            cold.append({"partition": str(p)})
+    return _ok(l0=l0, l1=l1, active=active, archive=archive, cold=cold, topics=TOPIC_NAMES)
+
+
+def _api_memory_view_cold(req):
+    """L3 冷存储分区详情（点开展示）：partition = 年/季度/主题。"""
+    eng = _memory_engine()
+    if eng is None:
+        return _error("记忆库不可用")
+    from memory_engine import roles
+    parts = (req.get("query", {}).get("partition") or [""])[0].strip().split("/")
+    if len(parts) != 3:
+        return _error("分区格式应为 年/季度/主题，如 2026/Q3/美食")
+    try:
+        year, quarter, topic = int(parts[0]), parts[1].upper(), parts[2]
+    except Exception:
+        return _error("分区格式不正确")
+    entries = eng.cold.read_partition(year, quarter, topic) if eng.cold else []
+    for e in entries:
+        e["full_text"] = roles.render(e.get("full_text") or "", eng.char_name)
+    return _ok(entries=entries)
+
+
+def _api_memory_view_add(req):
+    eng = _memory_engine()
+    if eng is None:
+        return _error("记忆库不可用")
+    ok, msg, f = _validate_memory_entry(req.get("json", {}))
+    if not ok:
+        return _error(msg)
+    try:
+        r = eng.ingest(f["content"], ts=f["ts"], year=f["year"], quarter=f["quarter"],
+                       main_topic=f["topic"] or None, participants=f["participants"])
+        return _ok(id=r.fragment_id, message="已新增记忆")
+    except Exception as e:
+        return _error(f"新增失败：{e}")
+
+
+def _api_memory_view_update(req):
+    eng = _memory_engine()
+    if eng is None:
+        return _error("记忆库不可用")
+    data = req.get("json", {})
+    fid = str(data.get("id") or "").strip()
+    ok, msg, f = _validate_memory_entry(data)
+    if not ok:
+        return _error(msg)
+    if not fid:
+        return _error("缺少记忆 id")
+    old = None
+    for db in (eng.active, eng.archive_db):
+        row = db.get(fid)
+        if row:
+            old = row
+            break
+    if old is None:
+        return _error("要编辑的记忆不存在（可能已被归档/合并）")
+    try:
+        # 删除旧记录（索引 + 向量 + 冷存储原文），再以同 id 重新入库（chunks=False 保证 id 不变）
+        for db in (eng.active, eng.archive_db):
+            db.delete([fid])
+        eng.vector.remove([fid])
+        eng.cold.remove_ids(old["year"], old["quarter"], old["main_topic"], [fid])
+        r = eng.ingest(f["content"], fragment_id=fid, ts=f["ts"], year=f["year"], quarter=f["quarter"],
+                       main_topic=f["topic"] or None, participants=f["participants"], chunks=False)
+        return _ok(id=r.fragment_id, message="已更新记忆")
+    except Exception as e:
+        return _error(f"更新失败：{e}")
+
+
+def _api_memory_view_delete(req):
+    eng = _memory_engine()
+    if eng is None:
+        return _error("记忆库不可用")
+    fid = str((req.get("json", {}) or {}).get("id") or "").strip()
+    if not fid:
+        return _error("缺少记忆 id")
+    old = None
+    for db in (eng.active, eng.archive_db):
+        row = db.get(fid)
+        if row:
+            old = row
+            break
+    if old is None:
+        return _error("要删除的记忆不存在")
+    try:
+        for db in (eng.active, eng.archive_db):
+            db.delete([fid])
+        eng.vector.remove([fid])
+        eng.cold.remove_ids(old["year"], old["quarter"], old["main_topic"], [fid])
+        return _ok(message="已删除记忆")
+    except Exception as e:
+        return _error(f"删除失败：{e}")
+
+
+def _api_multi_chat_poll(req):
+    """轮询「多人对话」剧本模式的流式生成结果（分段返回，客户端按 seq 去重）。"""
+    sid = (req.get("query", {}).get("id") or [""])[0]
+    mod = plugin_manager.manager.plugin_module("多人对话")
+    if not mod or not callable(getattr(mod, "poll_stream", None)):
+        return _error("多人对话插件不可用", 404)
+    try:
+        segments, done, error = mod.poll_stream(sid)
+    except Exception as e:
+        return _error(f"轮询失败: {e}", 500)
+    return _ok(segments=segments, done=done, error=error)
+
+
 def _api_models_get(_req):
     shared = (
         config.LLM_CHAT_BACKEND == "ollama"
@@ -425,6 +639,46 @@ def _api_models_get(_req):
     )
 
 
+# 背景图片内存缓存（避免每次页面加载都重读磁盘，key=路径+mtime+大小）
+_bg_image_cache = {"key": None, "body": None, "ctype": None}
+
+
+def _api_background_image(_req):
+    """提供“背景设置”插件配置的本地图片（浏览器无法直接加载本地文件路径，
+    由本端点读取并返回；http(s)/data:/以 / 开头的地址由前端直接加载）。"""
+    try:
+        s = plugin_manager.manager.get_settings("背景设置")
+    except Exception:
+        return _error("背景设置插件不可用", 500)
+    img = ((s or {}).get("image") or "").strip()
+    if not img:
+        return _error("未配置背景图片", 404)
+    if img.lower().startswith(("http://", "https://", "data:", "/")):
+        return _error("网络/内置图片由前端直接加载", 400)
+    p = os.path.expandvars(os.path.expanduser(img))
+    if not os.path.isabs(p):
+        p = os.path.join(config.PROJECT_ROOT, p)
+    if not os.path.isfile(p):
+        return _error(f"图片文件不存在：{img}", 404)
+    ctype = mimetypes.guess_type(p)[0] or "application/octet-stream"
+    key = None
+    try:
+        st = os.stat(p)
+        key = (p, st.st_mtime_ns, st.st_size)
+    except Exception:
+        key = None
+    if key and _bg_image_cache.get("key") == key:
+        return 200, _bg_image_cache["body"], _bg_image_cache["ctype"]
+    try:
+        with open(p, "rb") as f:
+            body = f.read()
+    except Exception as e:
+        return _error(f"读取图片失败：{e}", 500)
+    if key:
+        _bg_image_cache.update(key=key, body=body, ctype=ctype)
+    return 200, body, ctype
+
+
 # ==================== 路由表 ====================
 ROUTES = {
     ("GET", "/api/status"): _api_status,
@@ -432,6 +686,7 @@ ROUTES = {
     ("POST", "/api/settings"): _api_settings_post,
     ("GET", "/api/characters"): _api_characters_get,
     ("POST", "/api/character"): _api_character_post,
+    ("GET", "/api/background/image"): _api_background_image,
     ("GET", "/api/voice_presets"): _api_voice_presets_get,
     ("POST", "/api/voice_preset"): _api_voice_preset_post,
     ("GET", "/api/history"): _api_history_get,
@@ -454,6 +709,12 @@ ROUTES = {
     ("POST", "/api/plugins/settings"): _api_plugins_settings,
     ("POST", "/api/plugins/action"): _api_plugins_action,
     ("GET", "/api/plugins/state"): _api_plugins_state,
+    ("GET", "/api/memory/view"): _api_memory_view,
+    ("GET", "/api/memory/view/cold"): _api_memory_view_cold,
+    ("POST", "/api/memory/view/add"): _api_memory_view_add,
+    ("POST", "/api/memory/view/update"): _api_memory_view_update,
+    ("POST", "/api/memory/view/delete"): _api_memory_view_delete,
+    ("GET", "/api/multi_chat/poll"): _api_multi_chat_poll,
     ("GET", "/api/models"): _api_models_get,
 }
 
@@ -478,9 +739,54 @@ def _serve_file(path):
     return 200, body, ctype
 
 
+# ==================== 背景主题内联注入 ====================
+def _theme_embed():
+    """返回“背景设置”插件的当前设置，供页面内联脚本同步应用主题，
+    避免页面加载时先显示默认深色再切换（进入/退出页面时的闪烁）。"""
+    try:
+        for p in plugin_manager.manager.list_plugins():
+            if p.get("name") == "背景设置":
+                return {"name": "背景设置", "settings": p.get("settings") or {}}
+    except Exception:
+        pass
+    return {}
+
+
+def _theme_inline_script():
+    """生成内联脚本：在页面解析完成前同步应用背景主题并预加载背景图。"""
+    data = json.dumps(_theme_embed(), ensure_ascii=False).replace("<", "\\u003c")
+    return (
+        "<script>window.__THEME__=" + data + ";"
+        "(function(){var t=window.__THEME__&&window.__THEME__.settings||{};"
+        "var m=t.mode||\"dark\",b=document.body;"
+        "if(m===\"light\"){b.classList.add(\"theme-light\");}"
+        "else if(m===\"image\"){b.classList.add(\"theme-image\");"
+        "var i=String(t.image||\"\").trim(),src=\"\";"
+        "if(i){if(/^(https?:|data:|\\/)/i.test(i)){src=i;"
+        "b.style.setProperty(\"--bg-image\",'url(\"'+i+'\"');}"
+        "else{src=\"/api/background/image\";"
+        "b.style.setProperty(\"--bg-image\",\"url('/api/background/image')\");}"
+        "new Image().src=src;}"
+        "b.style.setProperty(\"--bg-strength\",String(t.strength!=null?t.strength:0.8));"
+        "}})();</script>"
+    )
+
+
+def _inject_theme(result):
+    """把背景主题内联脚本注入到 HTML 的 </body> 前。"""
+    if result is None:
+        return None
+    status, body, ctype = result
+    if b"</body>" in body:
+        body = body.replace(b"</body>", _theme_inline_script().encode("utf-8") + b"</body>", 1)
+    return status, body, ctype
+
+
 def _serve_static(path):
     if path in ("/", "/index.html"):
-        return _serve_file(INDEX_FILE)
+        return _inject_theme(_serve_file(INDEX_FILE))
+    if path.endswith(".html"):
+        return _inject_theme(_serve_file(_safe_join(WEB_DIR, path.lstrip("/"))))
     if path.startswith("/static/"):
         return _serve_file(_safe_join(STATIC_DIR, path[len("/static/"):]))
     if path.startswith("/runtime/"):
@@ -490,7 +796,7 @@ def _serve_static(path):
 
 # ==================== HTTP 处理器 ====================
 class Handler(BaseHTTPRequestHandler):
-    server_version = "XiaolongluoWebUI/1.3"
+    server_version = "XiaolongluoWebUI/1.7"
 
     def _dispatch(self):
         parsed = urllib.parse.urlparse(self.path)

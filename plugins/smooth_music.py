@@ -54,35 +54,46 @@ def _to_url(path):
 
 
 def _pick(videos, song, ctx):
-    """选择要播放的视频：first 直接取第一个；llm 用判断模型挑选。"""
+    """选择要播放的视频：first 直接取第一个；llm 用判断模型挑选。
+
+    任何异常（判断模型不可用 / 超时 / 解析失败）都安全回退到第一个结果，
+    绝不中断点歌流程（否则会被当作未处理而回退手动选歌）。
+    """
     if len(videos) <= 1:
         return videos[0]
     if ctx.manager.get_settings(NAME).get("mode", "first") == "llm":
-        lines = "\n".join(f"{i + 1}. {v['title']}" for i, v in enumerate(videos))
-        prompt = (
-            f"以下是从B站搜索「{song}」得到的歌曲结果：\n{lines}\n"
-            f"请选择最符合「{song}」这一首的序号，只输出一个数字。"
-        )
-        result = ctx.generate(prompt, num_predict=16, purpose="music_pick")
-        m = re.search(r'(\d+)', result or "")
-        picked = None
-        if m:
-            idx = int(m.group(1)) - 1
-            if 0 <= idx < len(videos):
-                picked = videos[idx]
-        if config.DEBUG_MODE:
-            # 调试模式：在命令行输出判断模型的选歌结果并注明出处
-            print(f"* (更流畅的音乐播放) 判断模型[{config.LLM_JUDGE_MODEL}@{config.LLM_JUDGE_BACKEND}] "
-                  f"选歌结果: {result!r} -> {picked.get('title') if picked else '未命中'}")
-        if picked is not None:
-            return picked
+        try:
+            lines = "\n".join(f"{i + 1}. {v['title']}" for i, v in enumerate(videos))
+            prompt = (
+                f"以下是从B站搜索「{song}」得到的歌曲结果：\n{lines}\n"
+                f"请选择最符合「{song}」这一首的序号，只输出一个数字。"
+            )
+            result = ctx.generate(prompt, num_predict=16, purpose="music_pick")
+            m = re.search(r'(\d+)', result or "")
+            picked = None
+            if m:
+                idx = int(m.group(1)) - 1
+                if 0 <= idx < len(videos):
+                    picked = videos[idx]
+            if config.DEBUG_MODE:
+                # 调试模式：在命令行输出判断模型的选歌结果并注明出处
+                print(f"* (更流畅的音乐播放) 判断模型[{config.LLM_JUDGE_MODEL}@{config.LLM_JUDGE_BACKEND}] "
+                      f"选歌结果: {result!r} -> {picked.get('title') if picked else '未命中'}")
+            if picked is not None:
+                return picked
+        except Exception as e:
+            print(f"* (更流畅的音乐播放) llm选歌失败，回退第一首: {e}")
     return videos[0]
 
 
 def _intro(title, ctx):
-    """生成“即将播放”的提示语（与主流程一致）。"""
+    """生成“即将播放”的提示语（与主流程一致）。
+
+    播报类调用：不检索记忆、不写入上下文（record=False / use_context=False），
+    避免歌曲标题污染 L0/L1/L2 缓存。
+    """
     prompt = f"即将播放《{title}》，请用当前角色口吻说一句“即将播放...”的话，不要输出任何其他的无关内容。"
-    reply = ctx.call_llm(title, extra_context=prompt)
+    reply = ctx.call_llm(title, extra_context=prompt, record=False, use_context=False)
     if not reply or "抱歉" in reply or "卡壳" in reply:
         return f"即将播放《{title}》。"
     return reply

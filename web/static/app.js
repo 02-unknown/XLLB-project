@@ -61,7 +61,7 @@ function setMode(mode) {
 }
 
 /* ==================== 设置面板 ==================== */
-function openSettings() { $("settings-pane").classList.remove("hidden"); loadSettings(); loadCharacters(); loadVoicePresets(); loadHistory(); loadPlugins(); }
+function openSettings() { $("settings-pane").classList.remove("hidden"); loadSettings(); loadCharacters(); loadVoicePresets(); loadHistory(); refreshTheme(); }
 function closeSettings() { $("settings-pane").classList.add("hidden"); }
 
 async function loadSettings() {
@@ -126,25 +126,39 @@ function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-/* ==================== 插件管理 ==================== */
-let ollamaModelsCache = null;
-
-async function fetchOllamaModels() {
-  if (ollamaModelsCache === null) {
-    try {
-      const m = await api("/api/models");
-      ollamaModelsCache = m.ollama_models || [];
-    } catch (e) {
-      ollamaModelsCache = [];
-    }
-  }
-  return ollamaModelsCache;
+/* ==================== 背景主题（由“背景设置”插件控制） ==================== */
+async function refreshTheme() {
+  try {
+    const r = await api("/api/plugins");
+    const bg = (r.plugins || []).find((p) => p.name === "背景设置");
+    applyBackgroundTheme(bg);
+  } catch (e) { /* 忽略 */ }
 }
 
-async function loadPlugins() {
-  const r = await api("/api/plugins");
-  const models = await fetchOllamaModels();
-  renderPlugins(r.plugins || [], models);
+// 应用背景主题（由“背景设置”插件控制：浅色 / 深色 / 自定义图片）
+function applyBackgroundTheme(bgPlugin) {
+  const s = (bgPlugin && bgPlugin.settings) || {};
+  const mode = s.mode || "dark";
+  const body = document.body;
+  body.classList.remove("theme-light", "theme-image");
+  body.style.removeProperty("--bg-image");
+  body.style.removeProperty("--bg-strength");
+  if (mode === "light") {
+    body.classList.add("theme-light");
+  } else if (mode === "image") {
+    body.classList.add("theme-image");
+    const img = String(s.image || "").trim();
+    if (img) {
+      // 本地路径（浏览器无法直接加载）交给后端端点提供；http(s)/data:/以 / 开头的地址直接使用
+      if (/^(https?:|data:|\/)/i.test(img)) {
+        body.style.setProperty("--bg-image", `url("${img}")`);
+      } else {
+        body.style.setProperty("--bg-image", "url('/api/background/image')");
+      }
+    }
+    body.style.setProperty("--bg-strength", String(s.strength != null ? s.strength : 0.8));
+  }
+  // dark 为默认主题，不加额外类
 }
 
 // 刷新插件的动态状态面板（如播放列表队列）
@@ -171,212 +185,7 @@ function renderPluginState(el, state) {
   el.innerHTML = `<div class="q-list">${items}</div>`;
 }
 
-function renderPlugins(plugins, ollamaModels) {
-  const list = $("plugin-list");
-  list.innerHTML = "";
-  if (!plugins.length) {
-    list.innerHTML = '<div class="p-desc">暂无插件（把 .py 文件放入 plugins/ 目录后点“重新加载插件”）。</div>';
-    return;
-  }
-  plugins.forEach((p) => {
-    const div = document.createElement("div");
-    div.className = "plugin-item" + (p.enabled ? "" : " disabled");
-    const head = document.createElement("div");
-    head.className = "p-head";
-    const nameEl = document.createElement("span");
-    nameEl.className = "p-name";
-    nameEl.textContent = `${p.name} `;
-    const ver = document.createElement("span");
-    ver.className = "p-version";
-    ver.textContent = `v${p.version}`;
-    nameEl.appendChild(ver);
-
-    const badge = document.createElement("span");
-    badge.className = "p-badge " + (p.official ? "official" : "third");
-    badge.textContent = p.official ? "官方" : "第三方";
-    nameEl.appendChild(badge);
-
-    if (p.hot_swap) {
-      const hs = document.createElement("span");
-      hs.className = "p-badge hot-swap";
-      hs.textContent = "热切换";
-      hs.title = "可在对话进行中随时启用 / 停用";
-      nameEl.appendChild(hs);
-    }
-
-    const toggle = document.createElement("button");
-    toggle.className = "btn p-toggle";
-    toggle.textContent = p.enabled ? "停用" : "启用";
-    toggle.onclick = async () => {
-      const r = await api(`/api/plugins/${p.enabled ? "disable" : "enable"}`, { method: "POST", body: { name: p.name } });
-      renderPlugins(r.plugins || [], ollamaModelsCache || []);   // 直接使用返回结果
-    };
-    head.appendChild(nameEl); head.appendChild(toggle);
-    div.appendChild(head);
-
-    const desc = document.createElement("div");
-    desc.className = "p-desc";
-    desc.textContent = p.description || "";
-    div.appendChild(desc);
-
-    if (p.commands && p.commands.length) {
-      const cmds = document.createElement("div");
-      cmds.className = "p-cmds";
-      cmds.textContent = "命令：" + p.commands.map((c) => c.name || c).join("  ");
-      div.appendChild(cmds);
-    }
-
-    // 插件动作按钮（一键触发）
-    if (p.actions && p.actions.length) {
-      const actRow = document.createElement("div");
-      actRow.className = "btn-row";
-      p.actions.forEach((a) => {
-        const btn = document.createElement("button");
-        btn.className = "btn";
-        btn.textContent = a.label || a.name;
-        btn.title = a.desc || "";
-        btn.onclick = async () => {
-          const r = await api("/api/plugins/action", { method: "POST", body: { name: p.name, action: a.name } });
-          if (r && r.reply) addMessage("assistant", r.reply);
-          if (r && r.speak && r.stream_id) await playStream(r.stream_id);
-          if (r && r.music && r.music.url) {
-            activePlaylistPlugin = r.music_plugin || null;
-            playMusicUrl(r.music.url, r.music.title);
-          } else if (r && r.music_control === "stop") {
-            musicAudio.pause(); musicAudio.src = ""; $("music-bar").classList.add("hidden");
-            activePlaylistPlugin = null;
-          }
-          // 动作可能修改了设置（如自动调优），重新加载插件以刷新设置表单与状态
-          loadPlugins();
-        };
-        actRow.appendChild(btn);
-      });
-      div.appendChild(actRow);
-    }
-
-    // 插件动态状态（如播放列表队列）
-    if (p.has_state) {
-      const stateBox = document.createElement("div");
-      stateBox.className = "plugin-state";
-      stateBox.id = `plugin-state-${p.name}`;
-      div.appendChild(stateBox);
-      refreshPluginState(p.name);
-    }
-
-    // 插件设置表单
-    if (p.settings_schema && p.settings_schema.length) {
-      const form = document.createElement("div");
-      form.className = "plugin-settings";
-      p.settings_schema.forEach((field) => {
-        const row = document.createElement("div");
-        row.className = "row";
-        const label = document.createElement("label");
-        label.textContent = field.label || field.key;
-        row.appendChild(label);
-
-        let input;
-        const val = (p.settings && p.settings[field.key]) !== undefined ? p.settings[field.key] : "";
-        if (field.type === "select") {
-          input = document.createElement("select");
-          (field.options || []).forEach((opt) => {
-            const o = document.createElement("option");
-            // 兼容 {value, label} 与纯字符串两种选项
-            const v = (typeof opt === "object" && opt !== null) ? opt.value : opt;
-            const t = (typeof opt === "object" && opt !== null) ? (opt.label || opt.value) : opt;
-            o.value = v; o.textContent = t; o.selected = (v === val);
-            input.appendChild(o);
-          });
-          // 后端切换时就地更新对应模型字段（不重渲染整表单，避免重置已选后端）
-          if (field.key.endsWith("_backend")) {
-            input.onchange = () => {
-              const modelKey = field.key === "chat_backend" ? "chat_model" : "judge_model";
-              const modelInput = form.querySelector(`input[data-key="${modelKey}"]`);
-              if (!modelInput) return;
-              const dlId = `dl-${p.name}-${modelKey}`;
-              if (input.value === "openai") {
-                modelInput.removeAttribute("list");
-                modelInput.placeholder = "如 gpt-4o-mini";
-                const dl = document.getElementById(dlId);
-                if (dl) dl.innerHTML = "";
-              } else {
-                modelInput.setAttribute("list", dlId);
-                modelInput.placeholder = "";
-                let dl = document.getElementById(dlId);
-                if (!dl) {
-                  dl = document.createElement("datalist");
-                  dl.id = dlId;
-                  form.appendChild(dl);
-                }
-                dl.innerHTML = "";
-                const cur = modelInput.value;
-                [...new Set([cur, ...(ollamaModels || [])])].filter(Boolean).forEach((m) => {
-                  const o = document.createElement("option");
-                  o.value = m;
-                  dl.appendChild(o);
-                });
-              }
-            };
-          }
-        } else if (field.type === "checkbox") {
-          input = document.createElement("input");
-          input.type = "checkbox";
-          input.checked = !!val;
-        } else if (field.type === "datalist") {
-          input = document.createElement("input");
-          input.type = "text";
-          input.value = val;
-          input.setAttribute("list", `dl-${p.name}-${field.key}`);
-          const dl = document.createElement("datalist");
-          dl.id = `dl-${p.name}-${field.key}`;
-          // options_source=ollama_models 时用缓存的可安装模型列表填充
-          let opts = field.options || [];
-          if (field.options_source === "ollama_models") {
-            const extra = (ollamaModels || []).filter((m) => !opts.includes(m));
-            opts = opts.concat(extra);
-          }
-          opts.forEach((opt) => {
-            const o = document.createElement("option");
-            o.value = opt;
-            dl.appendChild(o);
-          });
-          row.appendChild(dl);
-          if (field.placeholder) input.placeholder = field.placeholder;
-        } else {
-          input = document.createElement("input");
-          input.type = field.type === "password" ? "password" : (field.type === "number" ? "number" : "text");
-          input.value = val;
-          if (field.placeholder) input.placeholder = field.placeholder;
-        }
-        input.dataset.key = field.key;
-        row.appendChild(input);
-        form.appendChild(row);
-      });
-
-      const saveBtn = document.createElement("button");
-      saveBtn.className = "btn";
-      saveBtn.textContent = "保存设置";
-      saveBtn.onclick = async () => {
-        const patch = {};
-        form.querySelectorAll("input,select").forEach((el) => {
-          let v;
-          if (el.type === "checkbox") v = el.checked;
-          else { v = el.value; if (el.type === "number") v = Number(v); }
-          patch[el.dataset.key] = v;
-        });
-        const r = await api("/api/plugins/settings", { method: "POST", body: { name: p.name, settings: patch } });
-        if (!r.ok) {
-          addMessage("system", `保存失败：${r.error || "未知错误"}`);
-          return;
-        }
-        addMessage("system", `已保存「${p.name}」设置。`);
-        loadPlugins();
-      };
-      form.appendChild(saveBtn);
-      div.appendChild(form);
-    }
-    list.appendChild(div);
-  });
-}
+/* 插件管理界面已迁移到独立页面 plugins.html（plugins.js） */
 
 /* ==================== 聊天渲染 ==================== */
 function timeLabel() {
@@ -408,7 +217,39 @@ function addMessage(role, text, extra) {
   }
   chat.appendChild(div);
   $("chat-scroll").scrollTop = $("chat-scroll").scrollHeight;
+  saveChatSession();
   return div;
+}
+
+/* ==================== 会话保持（进入/退出插件管理页后聊天与上下文不丢失） ==================== */
+const CHAT_STORAGE_KEY = "xllb-chat-session";
+
+function saveChatSession() {
+  try {
+    sessionStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({
+      html: $("chat").innerHTML,
+      started: conversationStarted,
+      mode: currentMode,
+    }));
+  } catch (e) { /* 忽略 */ }
+}
+
+function restoreChatSession() {
+  try {
+    const raw = sessionStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (!data || !data.html) return;
+    $("chat").innerHTML = data.html;
+    conversationStarted = !!data.started;
+    if (data.mode === "qa" || data.mode === "live") currentMode = data.mode;
+    // 清理遗留在页面里的“思考中…”占位（页面被中途切走时会残留）
+    const stale = [...document.querySelectorAll("#chat .msg.system")].filter(
+      (el) => (el.textContent || "").trim() === "思考中…" || (el.textContent || "").includes("思考中")
+    );
+    stale.forEach((el) => el.remove());
+    saveChatSession();
+  } catch (e) { /* 忽略 */ }
 }
 
 function actionWrap() {
@@ -496,6 +337,36 @@ function stopCurrentAudio() {
 function stopSpeech() {
   stopCurrentAudio();
   speechEpoch++;
+}
+
+/* 多人对话·流式音频队列（边生成边播放，可被新播放打断） */
+let multiQueue = [];
+let multiPlaying = false;
+const MULTI_SPEAK_GAP_MS = 500;   // 上一个角色说完后，等待 0.5s 再播放下一位角色的发言
+
+function multiStop() { multiQueue = []; }
+
+async function multiPump() {
+  if (multiPlaying) return;
+  multiPlaying = true;
+  const epoch = speechEpoch;
+  let prevSpeaker = null;
+  while (multiQueue.length) {
+    if (epoch !== speechEpoch) { multiQueue = []; break; }
+    const item = multiQueue.shift();
+    const url = typeof item === "string" ? item : item.url;
+    const speaker = typeof item === "string" ? null : item.speaker;
+    if (prevSpeaker && speaker && speaker !== prevSpeaker) await sleep(MULTI_SPEAK_GAP_MS);
+    if (epoch !== speechEpoch) { multiQueue = []; break; }
+    if (speaker) prevSpeaker = speaker;
+    await playOne(url);
+  }
+  multiPlaying = false;
+}
+
+function multiPush(url, speaker) {
+  multiQueue.push(speaker ? { url, speaker } : url);
+  multiPump();
 }
 
 /* ==================== 音乐播放 ==================== */
@@ -661,6 +532,26 @@ async function handleMessage(text, mode) {
     return result;
   }
 
+  // 多人对话·剧本模式：流式追加 + 边生成边播放
+  if (result.multi_stream_id) {
+    streamMultiDialogue(result.multi_stream_id, result.reply);
+    return result;
+  }
+
+  // 多人对话：每个角色的回复单独一个聊天框显示，各自声线逐条播放（角色间留 0.5s 间隔）
+  if (result.multi_audio && result.multi_audio.length) {
+    const allUrls = [];
+    for (const a of result.multi_audio) {
+      const urls = (Array.isArray(a.audio) ? a.audio : [a.audio]).filter(Boolean);
+      allUrls.push(...urls);
+      urls.forEach((u) => multiPush(u, a.speaker));   // 自动播放（含角色间隔）
+      const wrap = actionWrap();
+      if (urls.length) wrap.appendChild(speakButton(() => urls));
+      addMessage("assistant", `${a.speaker}：${a.text}`, urls.length ? wrap : undefined);
+    }
+    return result;
+  }
+
   // 正常对话（流式播报）
   const collected = [];
   const wrap = actionWrap();
@@ -673,6 +564,57 @@ async function handleMessage(text, mode) {
 
 async function sendMessage(text) {
   await handleMessage(text, currentMode === "live" ? "live" : "qa");
+}
+
+/* 多人对话·流式（剧本/自然对话）：每个角色的发言单独一个聊天框，各自带重播按钮 */
+async function streamMultiDialogue(sid, initialText) {
+  multiStop();
+  const bubbles = {};          // seq -> 该句的气泡元素
+  const segUrls = {};          // seq -> 该句累计音频 URL
+  const playedAudio = new Set();
+  let placeholder = addMessage("assistant", initialText || "⏳ 多人对话生成中…");
+  while (true) {
+    const r = await api(`/api/multi_chat/poll?id=${encodeURIComponent(sid)}`).catch(() => ({ done: true }));
+    for (const seg of (r.segments || [])) {
+      const seq = seg.seq;
+      // 文本：每个角色单独一个聊天框（第一个发言替换占位气泡，后续各开新气泡）
+      if (!bubbles[seq]) {
+        const line = `${seg.speaker}：${seg.text}`;
+        if (placeholder) {
+          const bodyEl = placeholder.querySelector(".body");
+          if (bodyEl) bodyEl.textContent = line;
+          bubbles[seq] = placeholder;
+          placeholder = null;
+        } else {
+          bubbles[seq] = addMessage("assistant", line);
+        }
+      }
+      // 音频：到达即播放（不同角色之间自动留 0.5s 间隔），并给该气泡挂上重播按钮
+      const urls = (seg.audio || []).filter((u) => !playedAudio.has(u));
+      if (urls.length) {
+        urls.forEach((u) => playedAudio.add(u));
+        segUrls[seq] = (segUrls[seq] || []).concat(urls);
+        urls.forEach((u) => multiPush(u, seg.speaker));
+        const bubble = bubbles[seq];
+        if (bubble && !bubble.querySelector(".speak-btn")) {
+          const wrap = actionWrap();
+          wrap.appendChild(speakButton(() => segUrls[seq] || []));
+          bubble.appendChild(wrap);
+        }
+      }
+    }
+    if (r.done) {
+      // 一句都没生成出来（如生成失败）时，把错误显示在占位气泡里
+      if (placeholder && r.error) {
+        const bodyEl = placeholder.querySelector(".body");
+        if (bodyEl) bodyEl.textContent = r.error || "生成失败";
+      }
+      if (r.error === "多人对话已停止。") multiStop();   // 插件被停用：停止已入队的语音
+      break;
+    }
+    await sleep(350);
+  }
+  saveChatSession();
 }
 
 function renderVideoList(videos, keyword) {
@@ -931,6 +873,7 @@ $("btn-clear").onclick = async () => {
   await api("/api/history/clear", { method: "POST" });
   conversationStarted = false;
   $("chat").innerHTML = '<div class="welcome">已清空对话与上下文。</div>';
+  saveChatSession();
 };
 
 $("btn-settings").onclick = openSettings;
@@ -983,12 +926,6 @@ $("btn-history-latest").onclick = async () => {
 };
 $("btn-history-clear").onclick = async () => { await api("/api/history/clear", { method: "POST" }); loadHistory(); };
 
-$("btn-plugins-reload").onclick = async () => {
-  const r = await api("/api/plugins/reload", { method: "POST" });
-  addMessage("system", r.ok ? `已重新加载插件（${r.plugins.length} 个）` : "插件加载失败");
-  loadPlugins();
-};
-
 $("btn-music-toggle").onclick = () => { musicAudio.paused ? musicAudio.play() : musicAudio.pause(); };
 $("btn-music-stop").onclick = async () => {
   musicAudio.pause();
@@ -1001,6 +938,8 @@ $("btn-music-stop").onclick = async () => {
 
 /* ==================== 初始化 ==================== */
 (async function init() {
+  restoreChatSession();
   await refreshStatus();
   setInterval(refreshStatus, 5000);
+  refreshTheme();
 })();

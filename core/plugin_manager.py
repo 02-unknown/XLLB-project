@@ -29,9 +29,10 @@ class _Context:
         return storage.get_history()
 
     @staticmethod
-    def call_llm(text, extra_context=""):
+    def call_llm(text, extra_context="", record=True, use_context=True):
         from core import llm
-        return llm.call_ollama(text, extra_context=extra_context)
+        return llm.call_ollama(text, extra_context=extra_context,
+                               record=record, use_context=use_context)
 
     @staticmethod
     def generate(prompt, num_predict=64, temperature=0.0, purpose="plugin"):
@@ -402,8 +403,9 @@ class PluginManager:
             "skip_reason": None,
             "from_plugin": True,
         }
-        # 透传插件自定义字段（如 music 播放指令 / music_plugin 归属）
-        for key in ("music", "music_plugin"):
+        # 透传插件自定义字段（如 music 播放指令 / music_plugin 归属 / 多人对话音频 / 流式会话 /
+        # page 打开新页面 / confirm 二级确认（前端确认后调用 confirm 指定的执行动作））
+        for key in ("music", "music_plugin", "multi_audio", "multi_stream_id", "page", "confirm"):
             if key in result:
                 out[key] = result[key]
         return out
@@ -414,6 +416,11 @@ class PluginManager:
         if not p:
             return {}
         return self._call(p.module, "get_state", self.ctx) or {}
+
+    def plugin_module(self, name):
+        """返回指定插件的模块对象（供 Web 层调用插件能力），不存在返回 None。"""
+        p = self._plugins.get(name)
+        return p.module if p else None
 
 
 # 进程内单例

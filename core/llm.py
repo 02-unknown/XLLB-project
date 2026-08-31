@@ -31,21 +31,39 @@ def ollama_used():
             or config.LLM_JUDGE_BACKEND == "ollama")
 
 
-def _backend_ready(backend):
+def _chat_credentials():
+    """生成模型的外部 API 凭证（专属配置优先，回退共享配置）。"""
+    return (
+        config.LLM_CHAT_API_BASE or config.LLM_API_BASE,
+        config.LLM_CHAT_API_KEY or config.LLM_API_KEY,
+    )
+
+
+def _judge_credentials():
+    """判断模型的外部 API 凭证（专属配置优先，回退共享配置）。"""
+    return (
+        config.LLM_JUDGE_API_BASE or config.LLM_API_BASE,
+        config.LLM_JUDGE_API_KEY or config.LLM_API_KEY,
+    )
+
+
+def _backend_ready(backend, base="", key=""):
     if backend == "openai":
-        key = config.LLM_API_KEY or os.environ.get("OPENAI_API_KEY", "")
-        return bool(config.LLM_API_BASE) and bool(key)
+        key = key or os.environ.get("OPENAI_API_KEY", "")
+        return bool(base) and bool(key)
     return check_ollama()
 
 
 def check_backend():
     """探测生成模型后端是否可用。"""
-    return _backend_ready(config.LLM_CHAT_BACKEND)
+    base, key = _chat_credentials()
+    return _backend_ready(config.LLM_CHAT_BACKEND, base, key)
 
 
 def check_judge_backend():
     """探测判断模型后端是否可用。"""
-    return _backend_ready(config.LLM_JUDGE_BACKEND)
+    base, key = _judge_credentials()
+    return _backend_ready(config.LLM_JUDGE_BACKEND, base, key)
 
 
 # Ollama 模型列表缓存：避免每次打开插件设置都同步请求 /api/tags 造成卡顿。
@@ -128,8 +146,8 @@ def _ollama_generate(prompt, model, temperature, num_predict, stop):
     return resp.json().get("response", "").strip()
 
 
-def _openai_chat(messages, model, temperature, num_predict, stop):
-    base = (config.LLM_API_BASE or "").rstrip("/")
+def _openai_chat(messages, model, temperature, num_predict, stop, base="", key=""):
+    base = (base or config.LLM_API_BASE or "").rstrip("/")
     if not base:
         raise RuntimeError("未配置 API Base URL")
     payload = {"model": model, "messages": messages, "temperature": temperature}
@@ -137,7 +155,7 @@ def _openai_chat(messages, model, temperature, num_predict, stop):
     # 部分模型（含推理型）会先输出说明再给出答案，stop 会在首个句号/换行处截断，
     # max_tokens 过小会截掉答案；因此让模型生成到自然结束，再由调用方做稳健提取。
     headers = {"Content-Type": "application/json"}
-    api_key = config.LLM_API_KEY or os.environ.get("OPENAI_API_KEY", "")
+    api_key = key or config.LLM_API_KEY or os.environ.get("OPENAI_API_KEY", "")
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     resp = requests.post(base + "/chat/completions", json=payload, headers=headers, timeout=90)
@@ -147,28 +165,29 @@ def _openai_chat(messages, model, temperature, num_predict, stop):
     return (choices[0].get("message") or {}).get("content", "").strip()
 
 
-def _raw_chat(messages, model, backend, temperature, num_predict, stop):
+def _raw_chat(messages, model, backend, temperature, num_predict, stop, base="", key=""):
     if backend == "openai":
-        return _openai_chat(messages, model, temperature, num_predict, stop)
+        return _openai_chat(messages, model, temperature, num_predict, stop, base, key)
     return _ollama_chat(messages, model, temperature, num_predict, stop)
 
 
-def _raw_generate(prompt, model, backend, temperature, num_predict, stop):
+def _raw_generate(prompt, model, backend, temperature, num_predict, stop, base="", key=""):
     if backend == "openai":
-        return _openai_chat([{"role": "user", "content": prompt}], model, temperature, num_predict, stop)
+        return _openai_chat([{"role": "user", "content": prompt}], model, temperature, num_predict, stop, base, key)
     return _ollama_generate(prompt, model, temperature, num_predict, stop)
 
 
 # ==================== 带插件钩子的调用 ====================
 def _invoke_chat(messages, model, temperature, num_predict, stop, purpose, user_text):
     backend = config.LLM_CHAT_BACKEND
+    base, key = _chat_credentials()
     meta = {"purpose": purpose, "model": model, "backend": backend, "user_text": user_text}
     short = plugin_manager.manager.pre_llm(messages, meta)
     if short is not None:
         reply = str(short.get("reply", ""))
     else:
         try:
-            reply = _raw_chat(messages, model, backend, temperature, num_predict, stop)
+            reply = _raw_chat(messages, model, backend, temperature, num_predict, stop, base, key)
         except Exception as e:
             print("LLM 错误:", e)
             reply = "抱歉，我出了点问题。"
@@ -181,13 +200,14 @@ def generate(prompt, model=None, num_predict=64, temperature=0.0, stop=("\n", "�
     """以“判断模型”执行一次提示词生成（供联网判断、关键词、音乐意图等使用）。"""
     model = model or config.LLM_JUDGE_MODEL
     backend = config.LLM_JUDGE_BACKEND
+    base, key = _judge_credentials()
     meta = {"purpose": purpose, "model": model, "backend": backend, "user_text": user_text}
     short = plugin_manager.manager.pre_llm([{"role": "user", "content": prompt}], meta)
     if short is not None:
         reply = str(short.get("reply", ""))
     else:
         try:
-            reply = _raw_generate(prompt, model, backend, temperature, num_predict, stop)
+            reply = _raw_generate(prompt, model, backend, temperature, num_predict, stop, base, key)
         except Exception as e:
             print(f"生成失败({purpose}): {e}")
             reply = ""
@@ -196,30 +216,119 @@ def generate(prompt, model=None, num_predict=64, temperature=0.0, stop=("\n", "�
 
 
 # ==================== 主对话 ====================
-def call_ollama(user_message, extra_context=""):
-    """主对话（使用生成模型），维护全局对话历史并清洗输出。"""
-    current_influence = random.randint(config.influence_min, config.influence_max)
-    system_prompt = build_system_prompt(config.character_name, current_influence)
+def _get_memory_engine():
+    """惰性获取记忆引擎（不可用时返回 None，调用方回退旧上下文模式）。"""
+    try:
+        from memory_engine import get_engine
+        return get_engine()
+    except Exception:
+        return None
 
+
+def _memory_block(mem) -> str:
+    """把检索到的长期记忆片段转成上下文文本块。"""
+    parts = [mem.full_summary or ""]
+    if mem.participants:
+        parts.append(f"（参与者：{'、'.join(mem.participants)}）")
+    facts = []
+    for role, fd in (mem.facts_per_role or {}).items():
+        bits = []
+        for key in ("action", "result", "stance"):
+            v = (getattr(fd, key, "") or "") if hasattr(fd, key) else ""
+            if v:
+                bits.append(v)
+        if bits:
+            facts.append(f"{role}：" + "；".join(bits))
+    if facts:
+        parts.append("\n".join(facts[:5]))
+    return "\n".join(p for p in parts if p)
+
+
+def _legacy_messages(user_message, extra_context, system_prompt):
+    """引擎不可用时的回退：直接使用 conversation_history 镜像。"""
     if not config.conversation_history or config.conversation_history[0]["role"] != "system":
         config.conversation_history.insert(0, {"role": "system", "content": system_prompt})
     else:
         config.conversation_history[0]["content"] = system_prompt
-
-    messages_for_request = config.conversation_history.copy()
-
+    messages = config.conversation_history.copy()
     if extra_context:
-        user_prompt = (
-            f"用户刚才问：{user_message}\n\n"
-            f"以下是系统从互联网查到的信息：\n{extra_context}\n\n"
-            f"请直接基于以上信息回答问题，用中文、以{config.character_name}的口吻，简洁回答。不要输出任何“需要联网”的标记。"
-        )
-        messages_for_request.append({"role": "user", "content": user_prompt})
+        messages.append({
+            "role": "user",
+            "content": (
+                f"用户刚才问：{user_message}\n\n"
+                f"以下是系统从互联网查到的信息：\n{extra_context}\n\n"
+                f"请直接基于以上信息回答问题，用中文、以{config.character_name}的口吻，简洁回答。"
+                f"不要输出任何“需要联网”的标记。"
+            ),
+        })
     else:
-        messages_for_request.append({"role": "user", "content": user_message})
+        messages.append({"role": "user", "content": user_message})
+    return messages
+
+
+def _plain_messages(user_message, extra_context, system_prompt):
+    """无上下文调用（如音乐播报）：只带系统提示与当前输入，不读取任何历史/记忆。"""
+    messages = [{"role": "system", "content": system_prompt}]
+    if extra_context:
+        messages.append({
+            "role": "user",
+            "content": (
+                f"用户刚才问：{user_message}\n\n"
+                f"以下是系统信息：\n{extra_context}\n\n"
+                f"请用中文、以{config.character_name}的口吻，简洁回答，不要输出任何无关内容。"
+            ),
+        })
+    else:
+        messages.append({"role": "user", "content": user_message})
+    return messages
+
+
+def call_ollama(user_message, extra_context="", record=True, use_context=True):
+    """主对话（使用生成模型），上下文由 memory_engine 统一管理。
+
+    - use_context=True：组装上下文（L0 最近回合 + 相关长期记忆检索）；
+      use_context=False：不检索、不取历史（用于音乐播报等非对话用途，避免污染上下文）；
+    - record=True：生成后按模式记录回合（readwrite=记录并归档 / readonly=仅写 L0）；
+      record=False：不记录（播报类调用不写入任何缓存 / 镜像 / 归档）。
+    """
+    current_influence = random.randint(config.influence_min, config.influence_max)
+    system_prompt = build_system_prompt(config.character_name, current_influence)
+
+    engine = _get_memory_engine()
+    engine_ok = engine is not None and engine.is_ready()
+
+    if engine_ok and use_context:
+        ctx = engine.assemble_context(user_message, role=config.character_name)
+        messages = [{"role": "system", "content": system_prompt}]
+        for t in ctx.get("recent", []):
+            role = t.get("role")
+            if role in ("user", "assistant"):
+                messages.append({"role": role, "content": t.get("content", "")})
+        # 联网信息（extra_context）优先：有联网内容时不再注入记忆块，避免双源上下文冲突
+        mem = ctx.get("memory")
+        mem_block = _memory_block(mem) if (mem and mem.id and not extra_context) else ""
+        if extra_context or mem_block:
+            user_prompt = f"用户刚才问：{user_message}\n\n"
+            if extra_context:
+                user_prompt += f"以下是系统从互联网查到的信息：\n{extra_context}\n\n"
+            if mem_block:
+                user_prompt += f"以下是相关的历史记忆：\n{mem_block}\n\n"
+            user_prompt += (
+                f"请直接基于以上信息回答，用中文、以{config.character_name}的口吻，简洁回答。"
+                f"不要输出任何“需要联网”的标记。"
+            )
+            messages.append({"role": "user", "content": user_prompt})
+        else:
+            messages.append({"role": "user", "content": user_message})
+    elif engine_ok:
+        # 引擎可用但非对话用途：不检索、不取历史
+        messages = _plain_messages(user_message, extra_context, system_prompt)
+    else:
+        # 引擎不可用：回退旧模式（历史由 _legacy_messages 维护）
+        messages = _legacy_messages(user_message, extra_context, system_prompt)
 
     reply = _invoke_chat(
-        messages_for_request, config.LLM_CHAT_MODEL,
+        messages, config.LLM_CHAT_MODEL,
         temperature=0.3 if extra_context else 0.7,
         num_predict=-1, stop=None, purpose="chat", user_text=user_message,
     )
@@ -234,11 +343,19 @@ def call_ollama(user_message, extra_context=""):
     if not re.search(r'[\u4e00-\u9fff]', reply) or len(reply) < 3:
         reply = "哎呀，我有点卡壳了，换个问题试试？"
 
-    config.conversation_history.append({"role": "user", "content": user_message})
-    config.conversation_history.append({"role": "assistant", "content": reply})
-
-    if len(config.conversation_history) > 21:
-        config.conversation_history = [config.conversation_history[0]] + config.conversation_history[-(21 - 1):]
+    # 记录回合（仅真实对话 record=True；播报类 record=False 不写入任何缓存/镜像/归档）
+    if record:
+        if engine_ok:
+            archive = not ("卡壳" in reply or "出了点问题" in reply)
+            engine.record_turn(user_message, reply,
+                               meta={"role": config.character_name, "main_topic": "对话", "archive": archive})
+            recent = [{"role": t["role"], "content": t["content"]} for t in engine.l0.get_recent()]
+            config.conversation_history = [{"role": "system", "content": system_prompt}] + recent
+        else:
+            config.conversation_history.append({"role": "user", "content": user_message})
+            config.conversation_history.append({"role": "assistant", "content": reply})
+            if len(config.conversation_history) > 21:
+                config.conversation_history = [config.conversation_history[0]] + config.conversation_history[-(21 - 1):]
 
     return reply
 

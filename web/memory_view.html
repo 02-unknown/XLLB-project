@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>记忆管理 - 上下文记忆库</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    /* 与插件管理页一致的布局：顶栏固定，内容区独立滚动 */
+    .plugins-page { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; }
+    .plugins-page-inner { max-width: 960px; margin: 0 auto; }
+    .back-link { text-decoration: none; }
+
+    .mv-search { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .mv-search input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--panel-2); color: var(--text); font-size: 13px; }
+    .mv-nav { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 14px; }
+    .mv-nav a { font-size: 12px; padding: 4px 10px; border: 1px solid var(--border);
+      border-radius: 14px; color: var(--accent); text-decoration: none; }
+    .mv-sec { margin-bottom: 16px; }
+    .mv-sec > h2 { font-size: 14px; border-bottom: 1px dashed var(--border); padding-bottom: 4px; }
+    .mv-sec > h2 .cnt { color: var(--muted); font-weight: normal; margin-left: 6px; }
+    .mv-empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
+    .mv-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0;
+      background: var(--bg); font-size: 13px; }
+    .mv-item .meta { color: var(--muted); font-size: 11px; margin-bottom: 3px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .mv-item .ops { margin-top: 6px; display: flex; gap: 8px; }
+    .mv-item .ops button { font-size: 12px; }
+    .mv-item .body { word-break: break-all; }
+    .mv-item .detail { margin-top: 6px; padding: 6px 8px; background: var(--panel-2);
+      border-radius: 6px; font-size: 12px; }
+    .mv-item .detail .d-title { color: var(--muted); margin-bottom: 3px; }
+    .mv-item .detail .d-text { color: var(--text); white-space: pre-wrap; word-break: break-all; }
+    .mv-item .detail .d-item { margin: 4px 0; word-break: break-all; }
+    .mv-item .detail .d-item b { color: var(--accent); }
+    .mv-form { border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 18px; }
+    .mv-form .row { display: flex; align-items: flex-start; margin: 6px 0; gap: 8px; }
+    .mv-form .row label { flex: 0 0 64px; font-size: 13px; line-height: 26px; }
+    .mv-form input, .mv-form textarea { flex: 1; padding: 6px 8px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--panel-2); color: var(--text); font-size: 13px; }
+    .mv-form textarea { min-height: 56px; resize: vertical; }
+    .mv-spec { font-size: 12px; color: var(--muted); background: var(--panel-2);
+      border-radius: 6px; padding: 8px 10px; margin: 8px 0; line-height: 1.7; }
+    .mv-err { color: var(--danger); font-size: 12px; margin-top: 6px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn ghost back-link" href="/plugins.html">← 返回插件管理</a>
+    <span class="brand"><span class="logo">🧠</span><span class="title">记忆管理（上下文记忆库）</span></span>
+    <div class="status-bar" id="status-bar"></div>
+  </header>
+  <main class="layout">
+    <section class="plugins-page">
+      <div class="plugins-page-inner">
+
+        <div class="mv-search">
+          <input id="mv-q" placeholder="关键词（如：奶茶 / 爬山）">
+          <input id="mv-date" placeholder="日期（2026 / 2026-08 / 2026-08-27）">
+          <button class="btn" id="mv-search-btn">查询</button>
+          <button class="btn" id="mv-reset-btn">显示全部</button>
+        </div>
+
+        <div class="mv-nav">
+          <a href="#sec-l0">L0 会话缓存</a>
+          <a href="#sec-l1">L1 检索缓存</a>
+          <a href="#sec-active">L2 活跃区</a>
+          <a href="#sec-archive">L2 归档区</a>
+          <a href="#sec-cold">L3 冷存储</a>
+          <a href="#sec-form">＋ 新增记忆</a>
+        </div>
+
+        <!-- 新增 / 编辑记忆 -->
+        <section class="mv-sec" id="sec-form">
+          <h2 id="form-title">＋ 新增记忆（标准格式）</h2>
+          <div class="mv-spec">
+            标准格式（不接受其它格式，保存时会校验）：<br>
+            · 时间：<b>2026</b> 或 <b>2026-08</b> 或 <b>2026-08-27</b><br>
+            · 参与者：用中文顿号分隔，如 <b>洛天依、洛天依（朋友）</b><br>
+            · 主题：可选，从 <b id="topic-hint">美食/旅行/娱乐/爱好/学习/社交/回忆/健康/日程/日常/综合</b> 中选择一个；留空自动归类<br>
+            · 内容：一句话即可，2~1000 字，如「今天下午三点约好一起去公园散步」
+          </div>
+          <div class="mv-form">
+            <div class="row"><label>时间 *</label><input id="f-date" placeholder="如 2026-08-27"></div>
+            <div class="row"><label>参与者 *</label><input id="f-participants" placeholder="如 洛天依、洛天依（朋友）"></div>
+            <div class="row"><label>主题</label><input id="f-topic" placeholder="留空自动归类（美食/旅行/娱乐/爱好/学习/社交/回忆/健康/日程/日常）"></div>
+            <div class="row"><label>内容 *</label><textarea id="f-content" placeholder="一句话描述这次记忆…"></textarea></div>
+            <div class="row"><label></label>
+              <button class="btn" id="f-submit">保存</button>
+              <button class="btn" id="f-cancel" style="display:none">取消编辑</button>
+              <span class="mv-err" id="f-err"></span>
+            </div>
+          </div>
+        </section>
+
+        <section class="mv-sec" id="sec-l0"><h2>L0 会话缓存 <span class="cnt">（最近对话，进程内临时）</span></h2><div id="box-l0"></div></section>
+        <section class="mv-sec" id="sec-l1"><h2>L1 检索热缓存 <span class="cnt">（最近查询结果，30 分钟）</span></h2><div id="box-l1"></div></section>
+        <section class="mv-sec" id="sec-active"><h2>L2 活跃区 <span class="cnt">（近期记忆，可编辑 / 删除）</span></h2><div id="box-active"></div></section>
+        <section class="mv-sec" id="sec-archive"><h2>L2 归档区 <span class="cnt">（长期记忆，可编辑 / 删除）</span></h2><div id="box-archive"></div></section>
+        <section class="mv-sec" id="sec-cold"><h2>L3 冷存储 <span class="cnt">（原始全文分区）</span></h2><div id="box-cold"></div></section>
+
+      </div>
+    </section>
+  </main>
+  <script src="/static/memory_view.js"></script>
+</body>
+</html>

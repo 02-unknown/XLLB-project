@@ -125,4 +125,12 @@ def apply_character(mode, preset_name=None, raw_input=None, custom_req="", use_s
 
     config.conversation_history.clear()
     config.history_records.clear()
+    # 切换角色时同步清空记忆引擎的 L0 会话缓存（上下文统一由引擎管理）
+    try:
+        from memory_engine import get_engine
+        _eng = get_engine()
+        if _eng.is_ready():
+            _eng.clear_context()
+    except Exception:
+        pass
     return config.character_name, description

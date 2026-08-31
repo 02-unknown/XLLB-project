@@ -148,3 +148,12 @@ def mark_records(indexes):
 def clear_history():
     config.history_records.clear()
     config.conversation_history.clear()
+    # 上下文统一由记忆引擎管理：同步清空 L0 会话缓存与 L1 检索缓存，
+    # 否则下次生成时 L0 会重新注入旧回合（“仅清显示、上下文未清除”）。
+    try:
+        from memory_engine import get_engine
+        eng = get_engine()
+        if eng.is_ready():
+            eng.clear_context()
+    except Exception:
+        pass

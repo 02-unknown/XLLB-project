@@ -80,7 +80,9 @@ def main():
 
     # 1. 项目完整性
     print("--- 1. 项目文件完整性 ---")
-    essential = ["core", "plugins", "web", os.path.join("web", "index.html"),
+    essential = ["core", "plugins", "memory_engine", "web",
+                 os.path.join("web", "index.html"),
+                 os.path.join("web", "memory_view.html"),
                  os.path.join("web", "static"), "requirements.txt",
                  "app.py", "launcher.py"]
     for rel in essential:
@@ -99,6 +101,12 @@ def main():
         except Exception:
             report("依赖 requests/numpy/yt_dlp", False,
                    "依赖不完整，请运行 setup\\install.bat 重新安装")
+        try:
+            subprocess.check_output([venv_py, "-c", "import pyarrow"], timeout=30)
+            report("可选依赖 pyarrow（L3 冷存储 Parquet）", True)
+        except Exception:
+            report("可选依赖 pyarrow（L3 冷存储 Parquet）", False,
+                   "未安装：原文冷存储自动降级 JSONL，功能不受影响；可运行 setup\\install.bat 安装")
     else:
         report("venv 虚拟环境", False, "未创建，请先运行 setup\\install.bat")
 

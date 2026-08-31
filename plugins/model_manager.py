@@ -17,7 +17,11 @@ SETTINGS = {
     "judge_backend": "ollama",
     "chat_model": "qwen3.5:9b",
     "judge_model": "qwen3.5:9b",
-    "api_base": "",
+    "chat_api_base": "",   # 生成模型专属外部 API
+    "chat_api_key": "",
+    "judge_api_base": "",  # 判断模型专属外部 API
+    "judge_api_key": "",
+    "api_base": "",        # 旧版共享配置（仅用于一次性迁移，不再参与 UI）
     "api_key": "",
 }
 
@@ -27,12 +31,66 @@ def _apply(settings, c):
     c.LLM_JUDGE_BACKEND = settings.get("judge_backend", "ollama")
     c.LLM_CHAT_MODEL = settings.get("chat_model", c.LLM_CHAT_MODEL)
     c.LLM_JUDGE_MODEL = settings.get("judge_model", c.LLM_JUDGE_MODEL)
-    c.LLM_API_BASE = (settings.get("api_base") or "").strip()
-    c.LLM_API_KEY = (settings.get("api_key") or "").strip()
+    # 旧版共享配置一次性迁移：专属字段为空时用共享值填充，此后互不影响
+    legacy_base = (settings.get("api_base") or "").strip()
+    legacy_key = (settings.get("api_key") or "").strip()
+    chat_base = (settings.get("chat_api_base") or "").strip()
+    chat_key = (settings.get("chat_api_key") or "").strip()
+    judge_base = (settings.get("judge_api_base") or "").strip()
+    judge_key = (settings.get("judge_api_key") or "").strip()
+    if not chat_base and legacy_base:
+        chat_base = legacy_base
+    if not chat_key and legacy_key:
+        chat_key = legacy_key
+    if not judge_base and legacy_base:
+        judge_base = legacy_base
+    if not judge_key and legacy_key:
+        judge_key = legacy_key
+    c.LLM_CHAT_API_BASE = chat_base
+    c.LLM_CHAT_API_KEY = chat_key
+    c.LLM_JUDGE_API_BASE = judge_base
+    c.LLM_JUDGE_API_KEY = judge_key
+    # 兼容别名：供仍读取共享变量的代码使用（仅内部兜底，不参与 UI）
+    c.LLM_API_BASE = legacy_base
+    c.LLM_API_KEY = legacy_key
+
+
+def _persist_migration(settings, ctx):
+    """把旧版共享配置写入独立字段（一次性），并清理旧字段，确保二者互不干扰。"""
+    patch = {}
+    legacy_base = (settings.get("api_base") or "").strip()
+    legacy_key = (settings.get("api_key") or "").strip()
+    if legacy_base:
+        if not (settings.get("chat_api_base") or "").strip():
+            patch["chat_api_base"] = legacy_base
+        if not (settings.get("judge_api_base") or "").strip():
+            patch["judge_api_base"] = legacy_base
+    if legacy_key:
+        if not (settings.get("chat_api_key") or "").strip():
+            patch["chat_api_key"] = legacy_key
+        if not (settings.get("judge_api_key") or "").strip():
+            patch["judge_api_key"] = legacy_key
+    if patch:
+        try:
+            ctx.manager.save_settings(NAME, patch)
+        except Exception:
+            pass
+    # 迁移完成后移除旧版共享字段，避免用户清空独立字段时又被旧值回填
+    try:
+        manager = ctx.manager
+        with manager._lock:
+            stored = manager._settings.get(NAME, {})
+            if stored.get("api_base") or stored.get("api_key"):
+                stored.pop("api_base", None)
+                stored.pop("api_key", None)
+                manager._save_settings()
+    except Exception:
+        pass
 
 
 def on_load(settings, ctx):
     _apply(settings, ctx.config)
+    _persist_migration(settings, ctx)
     # 后台预热 Ollama 模型列表，避免首次打开设置时卡顿
     try:
         from core import llm
@@ -43,6 +101,7 @@ def on_load(settings, ctx):
 
 def on_settings_changed(settings, ctx):
     _apply(settings, ctx.config)
+    _persist_migration(settings, ctx)
 
 
 def _model_field(key, label, model, backend):
@@ -55,14 +114,22 @@ def _model_field(key, label, model, backend):
 
 
 def settings_schema():
-    return [
+    schema = [
         {"key": "chat_backend", "label": "生成后端", "type": "select", "options": ["ollama", "openai"]},
         {"key": "judge_backend", "label": "判断后端", "type": "select", "options": ["ollama", "openai"]},
         _model_field("chat_model", "生成模型", config.LLM_CHAT_MODEL, config.LLM_CHAT_BACKEND),
         _model_field("judge_model", "判断模型", config.LLM_JUDGE_MODEL, config.LLM_JUDGE_BACKEND),
-        {"key": "api_base", "label": "API Base URL", "type": "text", "placeholder": "https://api.openai.com/v1"},
-        {"key": "api_key", "label": "API Key", "type": "password", "placeholder": "留空则读取环境变量 OPENAI_API_KEY"},
+        # 生成 / 判断的外部 API 各自独立配置，始终显示（填好后再切换后端即可生效）
+        {"key": "chat_api_base", "label": "生成 API 地址", "type": "text",
+         "placeholder": "如 https://api.openai.com/v1"},
+        {"key": "chat_api_key", "label": "生成 API Key", "type": "password",
+         "placeholder": "留空则读取环境变量 OPENAI_API_KEY"},
+        {"key": "judge_api_base", "label": "判断 API 地址", "type": "text",
+         "placeholder": "如 https://api.openai.com/v1"},
+        {"key": "judge_api_key", "label": "判断 API Key", "type": "password",
+         "placeholder": "留空则读取环境变量 OPENAI_API_KEY"},
     ]
+    return schema
 
 
 # ==================== 命令 ====================

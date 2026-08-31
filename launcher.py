@@ -1,5 +1,5 @@
 # launcher.py
-# 小笼洛包 1.3 启动器（合并网页版与桌面版）。
+# 小笼洛包 1.7 启动器（合并网页版与桌面版）。
 # 启动时依次选择：
 #   1. 界面方式：桌面版（内嵌窗口，需 pywebview）/ 网页版（浏览器）
 #   2. 运行模式：Lite（仅加载语音合成，大模型只能用外部 API）/
@@ -63,6 +63,14 @@ def _preflight():
         except Exception:
             pass
         sys.exit(1)
+    # 可选依赖提示（不阻止启动）：上下文记忆库 L3 冷存储原文
+    for opt_dep in ("pyarrow",):
+        try:
+            importlib.import_module(opt_dep)
+        except Exception:
+            print("[提示] 可选依赖 pyarrow 未安装：上下文记忆库的原文冷存储将以 JSONL 保存"
+                  "（功能正常；安装后可改用更高效的 Parquet 格式："
+                  "venv\\Scripts\\python.exe -m pip install -r requirements.txt）")
 
 
 def _ask_choice(title, options, default):
@@ -182,7 +190,7 @@ def _run_desktop(serve, config):
     if webview is not None:
         print(f"正在打开桌面窗口：{url}")
         try:
-            webview.create_window("小笼洛包 1.3 桌面版", url,
+            webview.create_window("小笼洛包 1.7 桌面版", url,
                                   width=1280, height=820, resizable=True)
             webview.start()
             return
@@ -229,7 +237,7 @@ def main():
     _preflight()
 
     print("=" * 50)
-    print("小笼洛包 1.3")
+    print("小笼洛包 1.7")
     print("=" * 50)
     ui = _choose_ui()
     mode = _choose_mode()

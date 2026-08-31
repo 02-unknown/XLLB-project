@@ -30,10 +30,13 @@ Chat-bot/
 │   ├── runtime.py          #   运行时缓存清理
 │   ├── plugin_manager.py   #   插件系统（动态加载 / 启停 / 热重载）
 │   └── pipeline.py         #   对话处理流水线（QA + Live 共用）
+├── memory_engine/          # 上下文记忆库（分层语义检索引擎，独立库）
 ├── web/                    # Web UI 层
 │   ├── server.py           #   HTTP 服务 + JSON API（标准库实现）
-│   ├── index.html          #   页面
-│   └── static/             #   style.css / app.js
+│   ├── index.html          #   主页面
+│   ├── plugins.html        #   插件管理页
+│   ├── memory_view.html    #   记忆管理页
+│   └── static/             #   style.css / app.js / plugins.js / memory_view.js
 ├── plugins/                # 插件（第三方开发者可增删改，Web UI 热重载）
 ├── presets/                # 角色预设（*.json）
 ├── voice_presets/          # 语音预设（参考音频 + 权重）
@@ -114,8 +117,12 @@ venv\Scripts\python.exe -m pip install -r requirements.txt
 
 | 插件 | 说明 |
 | --- | --- |
+| 上下文记忆库（官方） | 多角色长文本分层语义检索：对话自动归档为长期记忆，毫秒级回忆 + 记忆管理页 |
+| 多人对话（官方） | 1-3 位预设人物回应；剧本 / 单次 / 自然对话（接话式·流式）三种生成方式 |
 | 模型与自动调优（官方） | 模型 / API 设置 + 一键自动调优；生成与判断的后端、模型可分别设置 |
-| 用户信息设置（官方） | 设置用户称呼 / 偏好等，实时融入系统提示词 |
+| 用户信息设置（官方） | 设置用户称呼 / 偏好等，实时融入系统提示词（兼容新旧上下文模式） |
+| 联网搜索设置（官方） | 配置联网搜索方式：Tavily（推荐）/ Bing / 自定义搜索 API |
+| 背景设置（官方） | 自定义背景图 / 主题（图片模式下界面统一亚克力风格） |
 | 记事本 | “记住 …”“我记了什么”或 `/memo` |
 | 翻译 | “翻译 …”或 `/translate`（中英自动判断） |
 | 快捷设置 | “关闭联网”/“开启联网”/“清空对话”或 `/net`、`/clear` |
@@ -124,6 +131,21 @@ venv\Scripts\python.exe -m pip install -r requirements.txt
 | 对话导出 | `/export` 导出为 Markdown |
 
 输入 `/help` 可查看所有可用命令。
+
+## 上下文记忆（长期记忆）
+
+启用「上下文记忆库」插件后，对话会被自动整理成长期记忆，供以后随时回忆（毫秒级检索）：
+
+- **只记住有意义的内容**：问候、寒暄、语气应答等低信息量回合自动跳过归档（可在插件设置中开启 LLM 深度复核）；
+  归档以**用户输入**为核心，角色回复仅作补充检索词；
+- **按时间回忆**：直接问“昨天/上周三/去年冬天/今年 Q2 我们做了什么”等，相对时间词按当前时间自动翻译；
+- **上下文感知**：话题切换不残留旧内容（如聊完“酸菜鱼做法”再问“新歌推荐”不会串味）；
+  省略式追问（“那周六呢”“然后呢”）自动衔接上一轮；
+- **防止错答**：检索/联网内容与当前话题无关时自动阻止注入；新闻/天气等实时信息按需自动联网搜索；
+- **记忆管理页**：在插件「高级选项」→「查看 / 管理记忆」打开，按层级（L0/L1/L2/L3）查看、
+  关键词/日期查询，并可手动新增 / 编辑 / 删除记忆（严格标准格式校验）；
+- **存储有界**：季度滚动归档 + 按季度/年度聚合 + 原文压缩，数据只降级、绝不删除；
+  长时间未活动会自动清理残留上下文；「高级选项 → 记忆初始化」可一键清空全部记忆（二级确认）。
 
 ### 模型与自动调优
 
@@ -142,6 +164,9 @@ venv\Scripts\python.exe -m pip install -r requirements.txt
 - **GPT-SoVITS API**：语音合成服务（`launcher_config.json` 配置 `api_script`，默认端口 9880）。
 - **Whisper 模型**：`models/whisper` 下的 faster-whisper 模型文件。
 - **ffmpeg**：点歌下载转码需要（路径见 `core/config.py` 的 `FFMPEG_PATH`）。
+- **pyarrow（可选）**：上下文记忆库 L3 冷存储原文使用 Parquet 格式（更高效、省空间）；
+  未安装时自动降级为 JSONL，**功能完全不受影响**。安装：`venv\Scripts\python.exe -m pip install -r requirements.txt`
+  （启动预检与「诊断.bat」会提示该可选依赖是否就绪）。
 
 ## Web API 一览
 
@@ -165,6 +190,9 @@ venv\Scripts\python.exe -m pip install -r requirements.txt
 | POST | `/api/plugins/enable` | 启用插件 |
 | POST | `/api/plugins/disable` | 停用插件 |
 | POST | `/api/plugins/settings` | 保存插件设置 |
+| GET | `/api/memory/view` | 记忆管理：按层级查看 / 关键词 / 日期查询 |
+| GET | `/api/memory/view/cold` | L3 冷存储分区详情 |
+| POST | `/api/memory/view/add` / `update` / `delete` | 手动新增 / 编辑 / 删除记忆（标准格式校验） |
 | GET | `/api/tts/next?id=` | 流式 TTS：长轮询拉取下一句语音 |
 
 ## 配置需求
@@ -172,7 +200,8 @@ venv\Scripts\python.exe -m pip install -r requirements.txt
 - GPU推理：4G显存（GTX 1060以上），8GB以上内存，硬盘空间大于20GB（程序16GB左右，但要为运行时的临时文件预留4GB）
 - 无独立显卡：4核心8线程cpu，16GB内存，硬盘空间大于20GB（非常不推荐，极易造成崩溃）
 - ps：非常极限，容易造成程序崩溃或其他未知错误，强烈建议使用更高配置
-- 
+
+  
 - **推荐配置**：完全使用本地部署方案（以9b大小的q4量化模型为基准）
 - 12G显存以上（RTX 3060以上），16GB以上内存，硬盘空间大于20GB
 - ps：不建议使用小于9b的模型作为生成回复的底模，模型幻觉会比较严重，9b实测算是推理速度与质量的一个甜点

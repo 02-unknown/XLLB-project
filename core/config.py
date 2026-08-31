@@ -17,6 +17,11 @@ LLM_CHAT_MODEL = OLLAMA_MODEL      # 生成 / 对话模型
 LLM_JUDGE_MODEL = OLLAMA_MODEL     # 判断模型（联网判断、关键词、音乐意图）
 LLM_API_BASE = ""                  # OpenAI 兼容 API 地址，如 https://api.openai.com/v1
 LLM_API_KEY = ""                   # API Key（留空则尝试使用环境变量 OPENAI_API_KEY）
+# 生成 / 判断模型可分别指定外部 API（留空则回退到上面的共享 LLM_API_BASE / LLM_API_KEY）
+LLM_CHAT_API_BASE = ""             # 生成模型专属 API 地址
+LLM_CHAT_API_KEY = ""              # 生成模型专属 API Key
+LLM_JUDGE_API_BASE = ""            # 判断模型专属 API 地址
+LLM_JUDGE_API_KEY = ""             # 判断模型专属 API Key
 
 OLLAMA_CHAT_API = "http://localhost:11434/api/chat"
 OLLAMA_GENERATE_API = "http://localhost:11434/api/generate"
@@ -62,7 +67,7 @@ FFMPEG_PATH = os.path.join(PROJECT_ROOT, "ffmpeg", "bin", "ffmpeg.exe")
 
 # 联网搜索（可通过“联网搜索设置”插件在 WebUI 配置）
 SEARCH_PROVIDER = "tavily"      # tavily | bing（不推荐，无需Key） | custom
-TAVILY_API_KEY = ""             # 请填写你自己的 Tavily API Key（或在 WebUI“联网搜索设置”中配置）
+TAVILY_API_KEY = ""   # 请替换
 TAVILY_MONTHLY_LIMIT = 1000
 SEARCH_CUSTOM_URL = ""          # 自定义搜索 API 地址（如 https://api.example.com/search）
 SEARCH_CUSTOM_KEY = ""          # 自定义搜索 API Key（可选）
