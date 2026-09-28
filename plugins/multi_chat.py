@@ -1,4 +1,4 @@
-# plugins/multi_chat.py —— 官方插件：多人对话。
+# plugins/multi_chat.py —— 内置插件：多人对话。
 # 启用后，普通对话由本插件接管：
 #   - 先判断用户是否指定了角色（消息里出现已配置的人物名），若有则只有该角色回应；
 #   - 否则随机抽取回应人数（1~3）与回应人；
@@ -19,6 +19,7 @@
 #   - 各环节只调用主干（core / memory_engine），不直接调用其它插件；
 #     记忆引擎不可用时回退最近对话，联网/歌曲检测失败时回退正常流程；
 #   - 语音合成前后会保存并恢复全局声线配置（含服务器模型权重），不影响主对话音色。
+import json
 import os
 import random
 import re
@@ -31,15 +32,20 @@ import core.config as config
 from core import character as character_core
 from core import llm as llm_core
 from core import tts as tts_core
+from core.runtime import runtime_url
 
 NAME = "多人对话"
-VERSION = "1.2.0"
-DESCRIPTION = "随机1-3位预设人物回应；可指定角色；剧本/单次/自然对话（接话式）三种生成方式"
-AUTHOR = "官方"
+VERSION = "1.3.0"
+DESCRIPTION = "角色管理页勾选参与角色；剧本/单次/自然对话（接话式）三种生成方式，各自声线合成"
+AUTHOR = "02"
 OFFICIAL = True
 HOT_SWAP = True
 
 SETTINGS = {
+    # 新：角色管理页勾选结果（JSON 数组字符串，如 ["洛天依","乐正绫"]；空=未配置，回退旧槽位）
+    "selected_characters": "",
+    "character_voices": "{}",   # 每个角色的声线映射 JSON（{"洛天依": "声线名"}）
+    # 旧（兼容保留）：人物 1~3 槽位
     "slot1_character": "",
     "slot1_voice": "",
     "slot2_character": "",
@@ -117,27 +123,106 @@ def _schema_options():
 
 
 def settings_schema():
-    chars, voices = _schema_options()
-    schema = []
-    for i in range(1, 4):
-        schema.append({"key": f"slot{i}_character", "label": f"人物{i}", "type": "select", "options": chars})
-        schema.append({"key": f"slot{i}_voice", "label": f"声线{i}", "type": "select", "options": voices})
-    schema.append({"key": "generation_mode", "label": "生成方式", "type": "select",
-                   "options": [
-                       {"value": "script", "label": "剧本模式（多次调用·流式）"},
-                       {"value": "single", "label": "单次模式（一次生成）"},
-                       {"value": "natural", "label": "自然对话（接话式·流式·推荐）"},
-                   ]})
-    schema.append({"key": "target_llm_judge", "label": "增强判断：用 LLM 识别用户是否单独对某角色说话（关闭则只用传统名字匹配）",
-                   "type": "checkbox"})
-    schema.append({"key": "max_lines", "label": "对话语句上限", "type": "number", "placeholder": "2-5"})
-    schema.append({"key": "auto_voice", "label": "用各自声线输出语音", "type": "checkbox"})
-    return schema
+    _, voices = _schema_options()
+    voice_names = "、".join(v["value"] for v in voices if v.get("value")) or "（未配置声线）"
+    return [
+        {"type": "section", "key": "characters",
+         "label": "对话角色（在「设置 → 角色与语音」中勾选）",
+         "desc": ("参与多人对话的角色在「设置 → 角色与语音」标签里勾选管理：那里会显示全部角色预设，"
+                  "勾选即参与对话，并可为每个角色分别指定声线（推荐使用接话式·自然对话）。"
+                  "至少勾选 2 个角色、且本插件处于启用状态时才会接管对话（否则为单人输出）；"
+                  "未勾选时沿用旧版「人物1~3」槽位配置。"
+                  f"可选声线：{voice_names}"),
+         "actions": [
+             {"name": "manage_characters", "label": "打开「角色与语音」设置",
+              "desc": "跳到设置页的角色与语音标签，勾选参与对话的角色并指定声线"},
+         ]},
+        {"key": "generation_mode", "label": "生成方式", "type": "select",
+         "options": [
+             {"value": "script", "label": "剧本模式（多次调用·流式）"},
+             {"value": "single", "label": "单次模式（一次生成）"},
+             {"value": "natural", "label": "自然对话（接话式·流式·推荐）"},
+         ]},
+        {"key": "target_llm_judge", "label": "增强判断：用 LLM 识别用户是否单独对某角色说话（关闭则只用传统名字匹配）",
+         "type": "checkbox"},
+        {"key": "max_lines", "label": "对话语句上限", "type": "number", "placeholder": "2-5"},
+        {"key": "auto_voice", "label": "用各自声线输出语音", "type": "checkbox"},
+    ]
+
+
+def on_action(action, ctx):
+    if action == "manage_characters":
+        # 打开设置页的「角色与语音」标签（全部角色预设 + 勾选参与角色 + 各角色声线）
+        return {"page": "/settings.html#characters", "speak": False}
+    return None
+
+
+def available(ctx):
+    """可用性声明（插件对外的握手信息）：告诉调用方现在能不能用多人对话。
+
+    设置页的「角色与语音」据此决定是否激活多人对话区：
+      · available=True  → 多人对话已激活（会接管对话，多角色输出）；
+      · available=False → 当前为单人输出，并给出原因（插件未启用 / 勾选不足 2 个角色）。
+    同时回传已勾选角色、最少角色数、生成方式，便于界面如实展示。
+    """
+    st = ctx.manager.get_settings(NAME)
+    try:
+        slots = _configured_slots(ctx)
+    except Exception:
+        slots = []
+    selected = [name for name, _voice in slots]
+    min_roles = 2
+    base = {
+        "enabled": True,
+        "selected": selected,
+        "min_roles": min_roles,
+        "generation_mode": st.get("generation_mode", "natural"),
+        "mode_label": {"script": "剧本模式", "single": "单次模式", "natural": "自然对话（接话式）"}
+                      .get(st.get("generation_mode", "natural"), "自然对话（接话式）"),
+    }
+    if len(selected) < min_roles:
+        base.update({
+            "available": False,
+            "reason": f"尚未勾选足够的参与角色（已选 {len(selected)} 个，至少需要 {min_roles} 个）",
+            "note": "当前为单人输出",
+        })
+        return base
+    base.update({
+        "available": True,
+        "reason": "",
+        "note": f"多人对话已激活：{'、'.join(selected)}（{base['mode_label']}）",
+    })
+    return base
 
 
 def _configured_slots(ctx):
-    """返回已配置的人物槽位 [(人物名, 声线名或"")]，按槽位顺序。"""
+    """返回参与对话的角色槽位 [(人物名, 声线名或"")]。
+
+    优先使用角色管理页勾选的结果（selected_characters = JSON 数组，character_voices = 声线映射）；
+    该设置为空字符串时（从未在页面保存过）回退到旧版「人物1~3」槽位，保证旧配置继续可用。
+    """
     st = ctx.manager.get_settings(NAME)
+    raw = (st.get("selected_characters") or "").strip()
+    if raw:
+        try:
+            selected = json.loads(raw)
+            if not isinstance(selected, list):
+                selected = []
+        except Exception:
+            selected = [c.strip() for c in raw.split(",") if c.strip()]
+        try:
+            vmap = json.loads(st.get("character_voices") or "{}")
+            if not isinstance(vmap, dict):
+                vmap = {}
+        except Exception:
+            vmap = {}
+        seen, slots = set(), []
+        for c in selected:
+            c = str(c).strip()
+            if c and c not in seen:
+                seen.add(c)
+                slots.append((c, str(vmap.get(c, "") or "")))
+        return slots
     slots = []
     for i in range(1, 4):
         c = (st.get(f"slot{i}_character") or "").strip()
@@ -308,9 +393,9 @@ def _recent_history(ctx, user_text=""):
     引擎不可用时回退 conversation_history 镜像。"""
     hist = None
     try:
-        from memory_engine import get_engine
-        eng = get_engine()
-        if eng.is_ready():
+        from memory_engine import service as mem_service
+        eng = mem_service.get_engine_for_read()   # 门禁：记忆插件停用 → 回退镜像历史
+        if eng is not None:
             recent = eng.relevant_recent(user_text, 6) if (user_text or "").strip() else eng.l0.get_recent(6)
             hist = [{"role": t.get("role"), "content": t.get("content", "")} for t in recent]
     except Exception:
@@ -326,9 +411,10 @@ def _recent_history(ctx, user_text=""):
 def _record_turn(ctx, user_text, reply, participants):
     """把一场多人对话回合记录到记忆引擎（统一上下文管理），并维护 conversation_history 镜像。"""
     try:
-        from memory_engine import get_engine
-        eng = get_engine()
-        if eng.is_ready():
+        from memory_engine import service as mem_service
+        # 回合记录只写 L0 会话上下文：readonly 模式也允许（是否归档长期由引擎按模式判定）
+        eng = mem_service.get_engine_for_turn()
+        if eng is not None:
             eng.record_turn(user_text, reply, meta={
                 "participants": list(participants or []),
                 "main_topic": "多人对话",
@@ -543,10 +629,10 @@ def _memory_search(user_text, cast_names, ctx):
     返回 (引擎或 None, 检索结果或 None)：引擎引用供上层调用注入复核等主干能力。
     """
     try:
-        from memory_engine import get_engine
-        eng = get_engine()
-        if not eng.is_ready():
-            _dbg(ctx, "上下文查询: 记忆引擎不可用（相关插件可能停用）→ 回退最近对话")
+        from memory_engine import service as mem_service
+        eng = mem_service.get_engine_for_read()   # 门禁：记忆插件停用 / 引擎挂起 → 回退
+        if eng is None:
+            _dbg(ctx, "上下文查询: 记忆引擎不可用（插件停用或未初始化）→ 回退最近对话")
             return None, None
         try:
             eng.maybe_clear_stale()   # 纠错：长时间未活动（直接关窗退出后）先清理残留上下文
@@ -1061,10 +1147,8 @@ def _synth_by_voice(lines, participants, ctx):
 
 
 def _to_url(path):
-    if not path:
-        return ""
-    rel = os.path.relpath(path, config.RUNTIME_DIR).replace("\\", "/")
-    return "/runtime/" + rel
+    """runtime 路径 → 可访问 URL（统一实现见 core/runtime.py；空路径给空串）。"""
+    return runtime_url(path) or ""
 
 
 # ==================== 状态展示 ====================
@@ -1118,7 +1202,8 @@ def on_command(command, args, ctx):
         return None
     slots = _configured_slots(ctx)
     if len(slots) < 2:
-        return {"reply": "多人对话：请在「插件管理 → 多人对话」中配置至少 2 位人物与声线。",
+        return {"reply": "多人对话：请在「插件管理 → 多人对话 → 对话角色」中打开角色管理页，"
+                         "勾选至少 2 位参与对话的角色。",
                 "speak": False}
     lines = [f"{i + 1}. {n}" + (f"（声线：{v}）" if v else "（默认声线）") for i, (n, v) in enumerate(slots)]
     st = ctx.manager.get_settings(NAME)

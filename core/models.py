@@ -32,6 +32,33 @@ def is_ready():
     return _ready
 
 
+def release():
+    """释放进程内的语音识别模型权重（退出程序时调用，尽快归还内存 / 显存）。
+
+    与「停止服务进程」同一目的：不留后台占用。释放后如果还要用，会重新懒加载。
+    """
+    global _model, _ready
+    freed = False
+    with _lock:
+        if _model is not None:
+            _model = None
+            _ready = False
+            freed = True
+    if freed:
+        try:
+            import gc
+            gc.collect()
+        except Exception:
+            pass
+        try:                      # 若装了 torch 且有 GPU 缓存，一并归还
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+    return freed
+
+
 def last_error():
     return _error
 

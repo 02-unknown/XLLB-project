@@ -16,7 +16,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 import core.config as config
-from core import llm, tts, models, services
+from core import llm, tts, models, services, version
 from web.server import run
 
 
@@ -35,7 +35,7 @@ def main():
     port = args.port or config.WEB_PORT
 
     print("=" * 40)
-    print("小笼洛包 1.7")
+    print(version.version_label())
     print("=" * 40)
 
     # 依赖探测（不阻塞，仅提示）
@@ -62,4 +62,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        # 统一退出流程（可重复调用）：停止新写入 → drain 归档队列 → 关闭记忆引擎 → 清理临时文件
+        try:
+            from core import shutdown as shutdown_mod
+            shutdown_mod.shutdown("app-exit")
+        except Exception:
+            pass

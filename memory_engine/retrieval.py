@@ -58,6 +58,11 @@ def _roles_set(role):
     return {str(role).strip()} if str(role).strip() else set()
 
 
+def empty_result() -> RetrievedMemory:
+    """空检索结果（引擎未初始化 / 插件停用挂起时使用，调用方按「无相关记忆」处理）。"""
+    return RetrievedMemory(id="", route="none")
+
+
 def search(engine, user_input: str, top_k: int = cfg.TOP_K, now: float = None,
            include_raw: bool = False, role=None, extra_query: str = None) -> RetrievedMemory:
     """对外检索入口：输入用户话术，返回记忆片段 + facts_per_role + 置信度。

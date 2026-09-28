@@ -1,4 +1,4 @@
-# plugins/model_manager.py —— 官方插件：模型 / API 设置 + 一键自动调优。
+# plugins/model_manager.py —— 内置插件：模型 / API 设置 + 一键自动调优。
 # 生成模型与判断模型可分别设置后端与模型名；Ollama 后端会列出已安装模型供选择。
 import os
 import platform
@@ -9,7 +9,7 @@ import core.config as config
 NAME = "模型与自动调优"
 VERSION = "1.0.0"
 DESCRIPTION = "模型 / API 设置（生成与判断可分开）+ 一键自动调优"
-AUTHOR = "官方"
+AUTHOR = "02"
 OFFICIAL = True
 
 SETTINGS = {
@@ -109,8 +109,10 @@ def _model_field(key, label, model, backend):
     # Ollama 可用模型由前端通过 /api/models 单独拉取（options_source 标记）。
     if backend == "ollama":
         return {"key": key, "label": label, "type": "datalist",
-                "options": [model] if model else [], "options_source": "ollama_models"}
-    return {"key": key, "label": label, "type": "text", "placeholder": "如 gpt-4o-mini"}
+                "options": [model] if model else [], "options_source": "ollama_models",
+                "desc": "从本机 Ollama 已安装的模型中选；也可手动输入模型名"}
+    return {"key": key, "label": label, "type": "text", "placeholder": "填该接口支持的模型名",
+            "desc": "填外部 API 支持的模型名（以服务方文档为准）"}
 
 
 def settings_schema():

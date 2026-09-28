@@ -125,11 +125,12 @@ def apply_character(mode, preset_name=None, raw_input=None, custom_req="", use_s
 
     config.conversation_history.clear()
     config.history_records.clear()
-    # 切换角色时同步清空记忆引擎的 L0 会话缓存（上下文统一由引擎管理）
+    # 切换角色时同步清空记忆引擎的 L0 会话缓存（上下文统一由引擎管理）；
+    # 只清进程内临时缓存、不写库，因此引擎已初始化就清（插件停用时也顺手清干净）
     try:
-        from memory_engine import get_engine
-        _eng = get_engine()
-        if _eng.is_ready():
+        from memory_engine import service as mem_service
+        _eng = mem_service.engine_ref()
+        if _eng is not None and _eng.is_ready():
             _eng.clear_context()
     except Exception:
         pass

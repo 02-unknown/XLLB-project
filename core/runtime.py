@@ -6,6 +6,17 @@ import time
 import core.config as config
 
 
+def runtime_url(abs_path):
+    """把 runtime 下的绝对路径转成可访问的 URL（各层共用的唯一实现）。
+
+    前端通过 `/runtime/...` 取合成语音 / 音乐文件（静态分发见 web/server.py）。
+    """
+    if not abs_path:
+        return None
+    rel = os.path.relpath(abs_path, config.RUNTIME_DIR).replace("\\", "/")
+    return "/runtime/" + rel
+
+
 def cleanup_runtime(max_age_seconds=None):
     """清理 runtime 目录下的生成文件。
 

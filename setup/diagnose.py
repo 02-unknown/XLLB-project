@@ -41,6 +41,17 @@ def port_open(host, port, timeout=1):
         return False
 
 
+def can_bind(host, port):
+    """端口能否被本机监听（Windows 上「系统保留段」内的端口会 bind 失败 → False）。"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, int(port)))
+        return True
+    except Exception:
+        return False
+
+
 def port_owner(port):
     """尽力获取占用端口的进程名（Windows）。"""
     try:
@@ -82,9 +93,11 @@ def main():
     print("--- 1. 项目文件完整性 ---")
     essential = ["core", "plugins", "memory_engine", "web",
                  os.path.join("web", "index.html"),
+                 os.path.join("web", "settings.html"),
                  os.path.join("web", "memory_view.html"),
                  os.path.join("web", "static"), "requirements.txt",
-                 "app.py", "launcher.py"]
+                 "app.py", "launcher.py", "launcher_gui.py", "version.txt",
+                 os.path.join("web", "launcher.html")]
     for rel in essential:
         report(f"文件 {rel}", os.path.exists(os.path.join(PROJECT_ROOT, rel)))
 
@@ -125,13 +138,13 @@ def main():
     listening = port_open(web_host, web_port)
     report(f"端口 {web_port} 监听", listening,
            (f"被占用：{port_owner(web_port)}" if (not listening and port_owner(web_port))
-            else ("服务未运行（启动 start.bat 后此处应为 OK）" if not listening else "")))
+            else ("服务未运行（启动 启动.vbs / start.bat 后此处应为 OK）" if not listening else "")))
     if listening:
         st = http_get(f"http://{web_host}:{web_port}/")
         report(f"Web 页面访问 http://{web_host}:{web_port}/", st == 200,
                f"HTTP {st}" if st else "页面响应异常")
     else:
-        report("Web 页面访问", False, "服务未运行，请先启动 start.bat")
+        report("Web 页面访问", False, "服务未运行，请先双击 启动.vbs（或 start.bat）启动")
 
     # 4. Ollama
     print("\n--- 4. Ollama（可选） ---")
@@ -146,22 +159,40 @@ def main():
     # 5. GPT-SoVITS
     print("\n--- 5. GPT-SoVITS（可选） ---")
     api_script = ""
+    gs_cfg = {}
     if os.path.exists(cfg_path):
         try:
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            api_script = (cfg.get("gpt_sovits", {}) or {}).get("api_script", "") or ""
+            gs_cfg = cfg.get("gpt_sovits", {}) or {}
+            api_script = gs_cfg.get("api_script", "") or ""
             if api_script and not os.path.isabs(api_script):
                 api_script = os.path.join(PROJECT_ROOT, api_script)
         except Exception:
             pass
     report("GPT-SoVITS api_v2.py", bool(api_script) and os.path.exists(api_script),
            api_script or "未配置（语音合成不可用，文字对话不受影响）")
-    if port_open("127.0.0.1", 9880):
-        st = http_get("http://127.0.0.1:9880/docs")
-        report("GPT-SoVITS 服务 (9880)", st == 200, f"HTTP {st}" if st else "API 异常")
+    # 端口可用性：Windows 上端口可能被「系统保留段」占用（Hyper-V / WSL / Docker 预留），
+    # 此时 GPT-SoVITS 会在 bind 时报 WSAEACCES(10013) 并立刻退出（表现为「自己关闭」）。
+    try:
+        gs_port = int(gs_cfg.get("port") or 0)
+    except Exception:
+        gs_port = 0
+    if not gs_port:
+        try:
+            import urllib.parse as _up
+            gs_port = int(_up.urlparse(gs_cfg.get("api_url") or "").port or 9880)
+        except Exception:
+            gs_port = 9880
+    if port_open("127.0.0.1", gs_port):
+        st = http_get(f"http://127.0.0.1:{gs_port}/docs")
+        report(f"GPT-SoVITS 服务 ({gs_port})", st == 200, f"HTTP {st}" if st else "API 异常")
+    elif can_bind("127.0.0.1", gs_port):
+        report(f"GPT-SoVITS 服务 ({gs_port})", False, "未运行（语音合成暂不可用，文字对话不受影响）")
     else:
-        report("GPT-SoVITS 服务 (9880)", False, "未运行（语音合成暂不可用，文字对话不受影响）")
+        report(f"GPT-SoVITS 端口 {gs_port}", False,
+               "该端口无法监听（被系统保留或已被占用）——程序启动时会自动改用可用端口并写回 "
+               "launcher_config.json；也可手动把 gpt_sovits.port 改成 20000 后重试")
 
     # 6. 系统 Python（判断安装程序能否补装）
     print("\n--- 6. 系统 Python（用于安装程序补装） ---")
@@ -204,14 +235,14 @@ def main():
     print("\n" + "=" * 56)
     failed = [r for r in RESULTS if not r[1]]
     if not failed:
-        print("全部检查通过：环境正常，请双击 start.bat 启动后浏览器会自动打开。")
+        print("全部检查通过：环境正常，请双击 启动.vbs（或 start.bat）启动，界面会自动打开。")
     else:
         print(f"发现 {len(failed)} 项异常：")
         for item, ok, detail in failed:
             print(f"  - {item}" + (f"：{detail}" if detail else ""))
         print("处理建议：")
         print("  1) venv/依赖异常 -> 双击 setup\\install.bat 完成安装（需联网，已使用国内镜像）；")
-        print("  2) Web 未运行     -> 双击 start.bat 启动，浏览器应自动打开；")
+        print("  2) Web 未运行     -> 双击 启动.vbs（或 start.bat）启动，界面应自动打开；")
         print("  3) 端口被占用     -> 关闭占用程序后重试；")
         print("  4) 浏览器打不开   -> 检查系统代理/防火墙，或手动访问诊断中给出的地址；")
         print("  5) 若仍有问题，请把本窗口输出完整截图反馈。")

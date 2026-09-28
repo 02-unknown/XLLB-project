@@ -1,4 +1,4 @@
-# plugins/user_profile.py —— 官方插件：用户信息设置。
+# plugins/user_profile.py —— 内置插件：用户信息设置。
 # 用户填写自己的信息后，这些信息会作为系统提示词的一部分注入。
 # 为保持对话稳定，用户信息在“对话开始”（上下文为空）时快照一次，
 # 对话进行中修改设置不会影响当前对话，只有新对话才会生效（即仅可在非对话期间使用）。
@@ -9,7 +9,7 @@
 NAME = "用户信息设置"
 VERSION = "1.1.0"
 DESCRIPTION = "设置用户信息（称呼 / 偏好等），在对话开始前生效"
-AUTHOR = "官方"
+AUTHOR = "02"
 OFFICIAL = True
 
 SETTINGS = {
@@ -31,11 +31,14 @@ def settings_schema():
 
 
 def _session_active(ctx):
-    """会话是否已开始（兼容新旧上下文模式）：新模式下看记忆引擎 L0，老模式看历史镜像。"""
+    """会话是否已开始（兼容新旧上下文模式）：新模式下看记忆引擎 L0，老模式看历史镜像。
+
+    走记忆服务门禁：记忆插件停用 / 引擎挂起时不再读取记忆（回退历史镜像判断）。
+    """
     try:
-        from memory_engine import get_engine
-        eng = get_engine()
-        if eng.is_ready() and eng.l0 is not None and eng.l0.size() > 0:
+        from memory_engine import service as mem_service
+        eng = mem_service.get_engine_for_read()
+        if eng is not None and eng.l0 is not None and eng.l0.size() > 0:
             return True
     except Exception:
         pass

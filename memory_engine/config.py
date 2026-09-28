@@ -2,14 +2,53 @@
 # 分层语义检索引擎的配置（所有阈值 / 路径 / 生命周期参数集中于此）。
 import os
 
+
 # 数据根目录：默认放在应用 runtime 下；可用环境变量 MEMORY_ENGINE_DATA 覆盖
 def _default_data_dir():
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(here, "runtime", "memory_engine")
 
+
 DATA_DIR = os.environ.get("MEMORY_ENGINE_DATA") or _default_data_dir()
 
-# ---- 数据文件布局（L2 索引层） ----
+
+class MemoryPaths:
+    """一个数据目录下的各层存储路径（实例级，避免存储层依赖全局配置）。
+
+    引擎按实例持有 MemoryPaths：active / archive / cold / log / FTS 标记全部由 data_dir 推导。
+    此前 data_dir 只被保存、未被使用（各层仍读全局路径），会导致「传入临时目录的实例」实际
+    写进真实 runtime，测试数据污染生产数据。这里把路径收口到实例上。
+    """
+
+    __slots__ = ("data_dir", "active_db", "archive_db", "cold_dir", "log_file", "fts_marker")
+
+    def __init__(self, data_dir: str = None):
+        self.data_dir = os.path.abspath(data_dir or DATA_DIR)
+        self.active_db = os.path.join(self.data_dir, "active", "memory.db")
+        self.archive_db = os.path.join(self.data_dir, "archive", "memory.db")
+        self.cold_dir = os.path.join(self.data_dir, "cold")
+        self.log_file = os.path.join(self.data_dir, "memory_engine.log")
+        self.fts_marker = os.path.join(self.data_dir, "last_fts_rebuild.txt")
+
+    def ensure_dirs(self) -> None:
+        for path in (self.active_db, self.archive_db):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.makedirs(self.cold_dir, exist_ok=True)
+
+    def same_as(self, other) -> bool:
+        return bool(other) and os.path.normcase(self.data_dir) == os.path.normcase(other.data_dir)
+
+    def as_dict(self) -> dict:
+        return {"data_dir": self.data_dir, "active_db": self.active_db, "archive_db": self.archive_db,
+                "cold_dir": self.cold_dir, "log_file": self.log_file, "fts_marker": self.fts_marker}
+
+
+def resolve_paths(data_dir: str = None) -> MemoryPaths:
+    """返回指定数据目录下的各层路径（不传则用默认数据目录）。"""
+    return MemoryPaths(data_dir)
+
+
+# ---- 数据文件布局（L2 索引层）：默认目录下的路径，兼容既有引用 ----
 ACTIVE_DB = os.path.join(DATA_DIR, "active", "memory.db")        # 活跃主库（SQLite + FTS5 + 向量表）
 ARCHIVE_DB = os.path.join(DATA_DIR, "archive", "memory.db")      # 归档历史库（季度滚动后落这里）
 COLD_DIR = os.path.join(DATA_DIR, "cold")                        # L3 冷存储根目录
@@ -24,7 +63,7 @@ CACHE_MAX_ITEMS = 512          # LRU 容量上限
 
 # ---- L0 会话缓存（最近对话上下文，进程内临时缓存） ----
 L0_MAX_ENTRIES = 20            # 最近 20 条对话回合作为 L0 上下文窗口
-CONTEXT_MODE = "readwrite"     # 上下文使用模式：readwrite=完整权限（生成后记录归档）| readonly=只读（仅写 L0，进程结束销毁）
+CONTEXT_MODE = "readwrite"     # 插件侧的默认上下文模式（引擎实例自身默认 readonly，需显式放开）
 L0_HIT_MIN_SCORE = 2.0         # L0 命中视为“实质相关”的最低加权重合分（省略式追问时用于跳过联网）
 L0_CONTEXT_MIN_SCORE = 1.5     # 注入 LLM 上下文时保留回合的最低加权重合分（话题切换时自动丢弃无关旧回合）
 
@@ -60,6 +99,7 @@ REVIEW_CACHE_TTL = 60          # 注入复核结果同回合缓存秒数（避�
 STALE_CONTEXT_TIMEOUT = 30 * 60  # 纠错机制：距上次活动超过该秒数视为新会话，自动清理 L0/L1 与镜像历史（0=关闭）
 ARCHIVE_VALUE_CHECK = True     # 归档价值判断：只保留有长期记忆价值的回合（问候/寒暄等低信息量不归档）
 LLM_VALUE_CHECK = False        # 归档价值判断是否启用 LLM 深度复核（每回合多一次判断模型调用，默认关闭）
+ARCHIVE_DRAIN_TIMEOUT = 15.0   # 清空 / 关闭时等待后台归档队列的秒数上限
 
 # ---- 存储治理（防止无限制消耗；数据只降级、不删除） ----
 # 数量配额：超过上限时按“最近访问时间”把最旧记录先归档、再聚合

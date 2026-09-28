@@ -4,7 +4,7 @@ import datetime
 NAME = "时间日期"
 VERSION = "1.0.0"
 DESCRIPTION = "查询本地时间与日期：/time、/date，或说“现在几点”"
-AUTHOR = "官方"
+AUTHOR = "02"
 OFFICIAL = True
 HOT_SWAP = True
 

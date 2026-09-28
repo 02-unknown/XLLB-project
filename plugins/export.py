@@ -7,7 +7,7 @@ import core.config as config
 NAME = "对话导出"
 VERSION = "1.0.0"
 DESCRIPTION = "把当前对话记录导出为 Markdown：/export"
-AUTHOR = "官方"
+AUTHOR = "02"
 OFFICIAL = True
 HOT_SWAP = True
 

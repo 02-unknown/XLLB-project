@@ -9,7 +9,8 @@
     "enabled": true,
     "api_script": "gpt_sovits/api_v2.py",
     "python": "",
-    "api_url": "http://127.0.0.1:9880",
+    "api_url": "http://127.0.0.1:20000",
+    "port": 20000,
     "start_timeout": 60
   },
   "web": {

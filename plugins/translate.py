@@ -4,7 +4,7 @@ import re
 NAME = "翻译"
 VERSION = "1.0.0"
 DESCRIPTION = "翻译文本：说“翻译 hello”或 /translate 内容（中英自动判断）"
-AUTHOR = "官方"
+AUTHOR = "02"
 OFFICIAL = True
 HOT_SWAP = True
 

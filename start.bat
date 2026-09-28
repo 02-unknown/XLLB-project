@@ -1,31 +1,32 @@
 @echo off
 rem ============================================================
-rem  Xiaolongluo 1.3 - One-Click Start
-rem  1) starts Ollama + GPT-SoVITS API (config: launcher_config.json)
-rem  2) preloads Whisper
-rem  3) opens the Web UI in your browser
+rem  Xiaolongluo - One-Click Start (graphical launcher)
+rem  Version is read from version.txt (nothing hardcoded here).
+rem  Uses pythonw.exe to start launcher_gui.py, so no console window is
+rem  kept. Services are started from the graphical launcher page
+rem  (Lite / Standard), then the same window shows the chat UI.
+rem  Tips: double-click 启动.vbs for a completely window-less start;
+rem        run "venv\Scripts\python.exe launcher.py" for the console version.
 rem ============================================================
 chcp 65001 >nul
 cd /d "%~dp0"
-title Xiaolongluo 1.3 - Keep this window open
 
-set "PY=venv\Scripts\python.exe"
-if not exist "%PY%" (
+rem 版本号统一从 version.txt 读取（要改版本号只改这一个文件）
+set "APPVER="
+if exist "version.txt" for /f "usebackq delims=" %%v in ("version.txt") do if not defined APPVER set "APPVER=%%v"
+if not defined APPVER set "APPVER=unknown"
+
+title Xiaolongluo %APPVER% - graphical launcher
+
+set "PYW=venv\Scripts\pythonw.exe"
+if not exist "%PYW%" (
   echo [ERROR] Virtual environment "venv" not found.
   echo         Please run setup\install.bat first to complete the installation.
   pause
   exit /b 1
 )
 
-echo [One-Click Start] Launching...
-echo Keep this window open while using the Web UI.
-"%PY%" launcher.py
-set "RC=%ERRORLEVEL%"
-echo.
-if "%RC%"=="0" (
-  echo The program has exited normally.
-) else (
-  echo [ERROR] The program exited with code %RC%. Please check the messages above.
-)
-pause
-exit /b %RC%
+echo [One-Click Start] Xiaolongluo %APPVER% - opening the graphical launcher...
+echo (This window closes by itself; logs are in runtime\logs\launcher_gui.log)
+start "" "%PYW%" "launcher_gui.py"
+exit /b 0

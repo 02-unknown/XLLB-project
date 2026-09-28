@@ -16,6 +16,7 @@ from core.judge import judge_need_online
 from core.search import get_internet_info
 from core.tts import synthesize
 from core.music import search_music, download_music
+from core.runtime import runtime_url
 from core import plugin_manager
 
 _lock = threading.Lock()
@@ -36,12 +37,23 @@ LIVE_RESUME_WORDS = ["继续", "恢复", "开始"]
 FORCE_SEARCH_WORDS = ["上网查", "搜索", "帮我查", "查一下", "网上找"]
 
 
-def _music_url(path):
-    """把 runtime 下的音乐文件路径转成可访问 URL。"""
-    if not path:
-        return None
-    rel = os.path.relpath(path, config.RUNTIME_DIR).replace("\\", "/")
-    return "/runtime/" + rel
+# 负责「点歌 / 自动选歌」的音乐插件名（停用它＝不要自动选歌，改由用户手动挑）
+MUSIC_PLUGIN_NAME = "更流畅的音乐播放"
+
+
+def _music_autoplay_enabled():
+    """音乐插件是否启用：决定「说一句点歌就直接放」还是「列出结果让用户选」。
+
+    插件文件不存在（用户删掉了插件）时按启用处理，保留内置的点歌能力；
+    插件明确被停用时不再自动选择。
+    """
+    try:
+        mgr = plugin_manager.manager
+        if mgr.plugin_module(MUSIC_PLUGIN_NAME) is None:
+            return True                      # 插件文件不存在：保留内置点歌能力
+        return bool(mgr.is_enabled(MUSIC_PLUGIN_NAME))
+    except Exception:
+        return True
 
 
 def _music_stop_reply():
@@ -99,6 +111,8 @@ def _base_result(user_text):
         "music_videos": [],
         "music_control": None,
         "skip_reason": None,
+        # 静默跳过：识别到的内容不进聊天界面（也不显示跳过提示），前端据此撤回刚显示的那条
+        "skip_silent": False,
     }
 
 
@@ -133,10 +147,12 @@ def process_message(user_text, mode="qa"):
         plugin_result["user_text"] = user_text
         return plugin_result
 
-    # 过滤疑似非对话输入（如视频字幕）
+    # 过滤疑似非对话输入（如视频字幕、环境噪音、单字应答）
+    # 这类输入不是对话：识别内容与「已跳过」提示都不显示在聊天界面（skip_silent）
     if len(user_text) < 2 or any(kw in user_text for kw in SKIP_KEYWORDS):
         result["action"] = "skip"
         result["skip_reason"] = "疑似非对话输入"
+        result["skip_silent"] = True
         return result
 
     # ========== 清空对话命令（真正清除上下文：L0 会话缓存 + 显示 + 镜像历史） ==========
@@ -187,12 +203,12 @@ def process_message(user_text, mode="qa"):
     # ========== 点歌意图检测（置于最前：先于联网与上下文检测） ==========
     # 歌曲关键词触发 → 跳过联网与上下文检测，进入歌曲播放检测流程；
     # LLM 复核失败（confirm_music_intent 为 False）→ 回到原流程继续。
-    # 命中后自动播放第一首（与“更流畅的音乐播放”插件行为一致），避免回退手动选歌；
-    # 仅当搜索无结果或下载失败时才回退手动选歌列表。
+    # 「自动播放第一首」属于音乐插件的行为：插件启用时才自动挑一首；
+    # 插件停用后这里只把搜索结果列出来，交给用户自己选（不再自动选择）。
     if any(trigger in user_text for trigger in MUSIC_TRIGGERS) and confirm_music_intent(user_text):
         keyword = generate_music_search_keyword(user_text)
         videos = search_music(keyword)
-        if videos:
+        if videos and _music_autoplay_enabled():
             video = videos[0]
             title = video.get("title", keyword)
             try:
@@ -200,16 +216,22 @@ def process_message(user_text, mode="qa"):
             except Exception:
                 path = None
             if path:
+                try:
+                    from core import music as music_core
+                    music_core.normalize_if_enabled(path)      # 插件开了音量均衡时同样生效
+                except Exception:
+                    pass
                 intro, _ = music_intro_prompt(keyword, keyword)
                 result["reply"] = intro
                 result["speak"] = True
-                result["music"] = {"url": _music_url(path), "title": title}
+                result["music"] = {"url": runtime_url(path), "title": title}
                 return result
-        # 无结果 / 下载失败 → 回退手动选歌
+        # 插件停用 / 无结果 / 下载失败 → 列出结果手动选歌
         result["action"] = "music_search"
         result["music_keyword"] = keyword
         result["music_videos"] = videos
-        result["reply"] = f"为你找到与「{keyword}」相关的歌曲，请选择一首播放。"
+        result["reply"] = (f"为你找到与「{keyword}」相关的歌曲，请选择一首播放。" if videos
+                           else f"没有找到与「{keyword}」相关的歌曲。")
         return result
 
     # ========== 正常对话流程：上下文检测优先，无命中再联网 ==========
@@ -265,11 +287,11 @@ def _context_hit(user_text, role=None):
     role：当前角色（判断层优先命中与当前角色相关的事件）。
     """
     try:
-        from memory_engine import get_engine
+        from memory_engine import service as mem_service
         from memory_engine import logging as me_log
         import memory_engine.config as mecfg
-        eng = get_engine()
-        if not eng.is_ready():
+        eng = mem_service.get_engine_for_read()   # 门禁：记忆插件停用 / 引擎挂起 → None
+        if eng is None:
             return False
         # 纠错机制：长时间未活动（直接关窗退出后）先清理残留上下文
         try:
@@ -311,10 +333,10 @@ def _review_content(user_text, content):
     引擎不可用 / 复核关闭 / 判断异常时放行（返回 True，不阻塞主流程）。
     """
     try:
-        from memory_engine import get_engine
+        from memory_engine import service as mem_service
         from memory_engine import logging as me_log
-        eng = get_engine()
-        if not eng.is_ready():
+        eng = mem_service.get_engine_for_read()
+        if eng is None:
             return True
         ok = eng.review_injection(user_text, content)
         if not ok:

@@ -1,9 +1,9 @@
-# plugins/search_settings.py —— 官方插件：联网搜索设置。
+# plugins/search_settings.py —— 内置插件：联网搜索设置。
 # 在 WebUI 中配置联网搜索方式：Tavily（推荐）、无需 Key 的 Bing（不推荐）、自定义搜索 API。
 NAME = "联网搜索设置"
 VERSION = "1.0.0"
 DESCRIPTION = "配置联网搜索：Tavily（推荐）/ Bing（无需Key，不推荐）/ 自定义搜索 API"
-AUTHOR = "官方"
+AUTHOR = "02"
 OFFICIAL = True
 HOT_SWAP = True
 

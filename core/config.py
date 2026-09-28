@@ -9,7 +9,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ========== 路径配置 ==========
 WHISPER_MODEL_DIR = os.path.join(PROJECT_ROOT, "models", "whisper")
 
-# ========== 大模型设置（可由官方“模型与自动调优”插件 / Web UI 热切换） ==========
+# ========== 大模型设置（可由「模型与自动调优」插件 / Web UI 热切换） ==========
 OLLAMA_MODEL = "qwen3.5:9b"        # Ollama 默认模型（向后兼容）
 LLM_CHAT_BACKEND = "ollama"        # 生成模型的运行后端："ollama" 或 "openai"
 LLM_JUDGE_BACKEND = "ollama"       # 判断模型的后端："ollama" 或 "openai"（可单独设置）
@@ -35,7 +35,6 @@ REF_AUDIO_PATH = os.path.join(
     "my_voice.wav_0000000000_0000173120.wav",
 ).replace("\\", "/")
 PROMPT_TEXT = ""
-TTS_MODEL_NAME = "GPT-SoVITS 自定义音色"
 CURRENT_VOICE_NAME = "默认"
 GPT_WEIGHTS_PATH = ""
 SOVITS_WEIGHTS_PATH = ""
@@ -72,11 +71,8 @@ TAVILY_MONTHLY_LIMIT = 1000
 SEARCH_CUSTOM_URL = ""          # 自定义搜索 API 地址（如 https://api.example.com/search）
 SEARCH_CUSTOM_KEY = ""          # 自定义搜索 API Key（可选）
 
-# 录音参数（浏览器端录音沿用这些阈值做静音检测）
+# 音频采样率（转写用）与对话历史上限（录音的静音阈值在浏览器端，见 web/static/app.js）
 SAMPLE_RATE = 16000
-SILENCE_THRESHOLD = 500
-SILENCE_DURATION = 1.2
-MAX_RECORD_SEC = 10
 MAX_HISTORY = 20
 
 # 联网触发词（保留，供需要时做启发式兜底）
@@ -94,6 +90,8 @@ WEB_PORT = 10999
 
 # ========== 全局运行时状态 ==========
 APP_MODE = "standard"       # 运行模式：standard（全部服务）/ lite（仅语音合成 + 外部 API）
+# 是否由图形启动器（launcher_gui.py）拉起：为真且尚未选择模式时，主页面先显示启动页
+LAUNCH_VIA_GUI = False
 DEBUG_MODE = False
 tts_volume = 1.0
 music_volume = 0.7

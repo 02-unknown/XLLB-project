@@ -67,19 +67,26 @@ def generate_audio_for_sentence(sentence):
     return audio_file
 
 
+def tts_sentences(text):
+    """把文本按合成规则切成句子列表（与 iter_audio 完全一致），用于预先得到总句数。
+
+    界面上的合成进度条依赖「总句数」：先算出来，再边合成边上报已完成句数。
+    """
+    if not text or not text.strip():
+        return []
+    clean = force_chinese_only(text)
+    if not clean:
+        return []
+    return [s for s in split_sentences(clean) if s and re.search(r"[\u4e00-\u9fff]", s)]
+
+
 def iter_audio(text):
     """逐句合成并逐句产出音频路径（生成器）。
 
     使用有界并发（TTS_CONCURRENCY）提前排队后续句子的合成请求，
     第一句生成完即可开始播放，同时后续句子已在合成中，显著减少上下句衔接等待。
     """
-    if not text or not text.strip():
-        return
-    clean = force_chinese_only(text)
-    if not clean:
-        return
-
-    sentences = [s for s in split_sentences(clean) if s and re.search(r"[\u4e00-\u9fff]", s)]
+    sentences = tts_sentences(text)
     if not sentences:
         return
 
@@ -114,11 +121,18 @@ def synthesize(text):
 
 
 class TtsStreamer:
-    """在后台线程逐句合成，供 Web 层按需拉取（长轮询）。"""
+    """在后台线程逐句合成，供 Web 层按需拉取（长轮询）。
+
+    total / produced 供界面显示合成进度：总句数在创建时即可算出（纯文本分句），
+    已完成句数随每句合成完成递增。total == 0 表示这段文本没有可合成内容。
+    """
 
     _DONE = object()
 
     def __init__(self, text):
+        self.total = len(tts_sentences(text))
+        self.produced = 0
+        self.done = False
         self._queue = queue.Queue()
         self._thread = threading.Thread(target=self._run, args=(text,), daemon=True)
         self._thread.start()
@@ -126,9 +140,15 @@ class TtsStreamer:
     def _run(self, text):
         try:
             for path in iter_audio(text):
+                self.produced += 1
                 self._queue.put(path)
         finally:
+            self.done = True
             self._queue.put(self._DONE)
+
+    def progress(self):
+        """合成进度：{produced, total, done}（total=0 表示没有可合成的句子）。"""
+        return {"produced": self.produced, "total": self.total, "done": self.done}
 
     def get(self, timeout=30.0):
         """返回 (audio_path, done)；超时未就绪时返回 (None, False)。"""

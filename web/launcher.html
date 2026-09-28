@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小笼洛包</title>
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/app-icon.png" />
+  <link rel="shortcut icon" href="/static/favicon.ico" />
+  <link rel="apple-touch-icon" href="/static/app-icon.png" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/app_lifecycle.js"></script>
+</head>
+<body>
+  <main class="launch-wrap">
+    <header class="launch-head">
+      <img class="launch-logo" src="/static/app-icon.png" alt="小笼洛包" />
+      <h1 class="launch-title">小笼洛包</h1>
+      <p class="launch-sub" id="launch-sub">请选择启动模式</p>
+    </header>
+
+    <!-- 模式选择：由 /api/launch/state 提供的模式清单渲染（点击即按该模式拉起服务） -->
+    <section class="launch-modes" id="launch-modes">
+      <div class="launch-loading">正在读取启动项…</div>
+    </section>
+
+    <!-- 启动进度：步骤列表 + 进入界面按钮 -->
+    <section class="launch-progress hidden" id="launch-progress">
+      <div class="launch-steps" id="launch-steps"></div>
+      <div class="launch-note" id="launch-note"></div>
+      <div class="launch-actions" id="launch-actions"></div>
+    </section>
+
+    <footer class="launch-foot">
+      <span>运行日志：runtime/logs/xiaolongluo.log</span>
+      <span class="launch-foot-sep">·</span>
+      <span>启动失败可运行「诊断.bat」检查环境</span>
+    </footer>
+  </main>
+  <script src="/static/launcher.js"></script>
+</body>
+</html>

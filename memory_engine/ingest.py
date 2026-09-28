@@ -79,7 +79,38 @@ def ingest(
 
 
 def delete(engine, fragment_id: str) -> bool:
-    """按 id 删除一条记忆（含索引与向量）。"""
-    engine.active.delete([fragment_id])
-    engine.vector.remove([fragment_id])
+    """按 id 删除一条记忆（含索引与向量）。
+
+    删除逻辑统一收敛在引擎内部：活跃库 + 归档库 + 向量索引 + L3 冷存储原文。
+    Web 管理接口只调用本方法，不再自行拼「删 active/archive/vector/cold」的多层逻辑
+    （否则各层容易漏删，出现「管理页删掉了、原文还留在冷存储」这类不一致）。
+    """
+    row = None
+    for db in (engine.active, engine.archive_db):
+        if db is None:
+            continue
+        try:
+            row = db.get(fragment_id)
+        except Exception:
+            row = None
+        if row:
+            break
+    for db in (engine.active, engine.archive_db):
+        if db is None:
+            continue
+        try:
+            db.delete([fragment_id])
+        except Exception:
+            pass
+    try:
+        if engine.vector is not None:
+            engine.vector.remove([fragment_id])
+    except Exception:
+        pass
+    if row is not None and engine.cold is not None:
+        try:
+            engine.cold.remove_ids(row.get("year"), row.get("quarter"),
+                                   row.get("main_topic"), [fragment_id])
+        except Exception:
+            pass
     return True

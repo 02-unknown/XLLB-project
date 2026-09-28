@@ -1,20 +1,32 @@
-# plugins/memory.py —— 官方插件：上下文记忆库（分层语义检索）。
-# 启用：初始化 memory_engine（L1 热缓存 / L2 SQLite+FTS5+向量索引 / L3 冷存储），
-#       并执行每日一次的 FTS5 增量重建。
-# 停用：安全关闭引擎（数据保留在磁盘，再次启用即可恢复）。
-# 命令：/memory status | store <文本> | search <查询> | archive | clear
-# 说明：本插件只负责「检索 / 存入 / 输出」接口的生命周期与测试入口，
-#       不挂接 on_message，不参与发言者判断，不改变任何现有对话行为。
+# plugins/memory.py —— 内置插件：上下文记忆库（分层语义检索）。
+#
+# 生命周期（与 memory_engine.service 门禁配合，核心对话路径也受同一门禁约束）：
+#   启用 on_load  ：初始化引擎 → 注册门禁（下发上下文模式）→ 首次加载做 FTS 重建与运行开始治理
+#                  → 启动后台治理线程；
+#   停用 on_unload：停止并 join 后台线程 → 注销门禁（挂起引擎：立即停止检索与写入），
+#                  **不关闭引擎、不清空 L0 会话上下文**，再次启用可无缝恢复；
+#   热重载        ：同上（保留引擎与 L0），新模块 on_load 不再重复「运行开始」清理；
+#   进程退出      ：由统一 shutdown 流程调用 service.shutdown() → engine.close()（drain 归档后关库）。
+#
+# 命令：/memory status | store <文本> | search <查询> | archive | clear | mode | cache | govern | tidy …
+import threading
 import traceback
 
 import core.config as config
+from memory_engine.service import WriteBlocked
 
 NAME = "上下文记忆库"
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 DESCRIPTION = "多角色长文本分层语义检索：入库/检索/输出接口预留，/memory 命令测试"
-AUTHOR = "官方"
+AUTHOR = "02"
 OFFICIAL = True
 HOT_SWAP = True
+# 重载策略（供 Web UI 展示 / 插件管理器参考）：重载不影响会话上下文
+RELOAD_POLICY = {
+    "preserve_context": True,
+    "allow_during_chat": True,
+    "note": "重载只重启插件代码，保留记忆引擎实例与 L0 会话上下文，不打断当前对话",
+}
 
 SETTINGS = {
     "llm_recheck": False,         # 模糊冲突时是否允许轻量级 LLM 复核（默认关闭：低延迟优先；开启会多一次 LLM 网络调用）
@@ -32,17 +44,45 @@ SETTINGS = {
 }
 
 _engine = None
-_maintain_stop = None            # 后台治理线程停止事件
-_maintain_thread = None
+
+# 后台治理线程状态机：starting / running / stopping / stopped / failed
+# （不再用「线程对象存在且 alive」作为唯一启动判断：停用后快速启用时旧线程可能仍在退出中，
+#   会导致新线程不启动、旧线程退出后系统再没有维护线程）
+_maintain = {
+    "state": "stopped",
+    "thread": None,
+    "stop": None,
+    "errors": 0,
+    "last_run": None,
+    "last_error": "",
+    "runs": 0,
+}
+_maintain_lock = threading.RLock()
+
+
+def _service():
+    """记忆服务门禁（唯一权威：插件是否启用 / 上下文模式 / 读写与管理权限）。"""
+    from memory_engine import service
+    return service
 
 
 def _get_engine(ctx):
+    """获取（必要时初始化）记忆引擎。
+
+    初始化只发生在插件启用路径上：核心对话路径拿到的是未初始化（或已挂起）的引擎，
+    不会隐式打开数据库、也不会隐式写库。
+    """
     global _engine
+    # 缓存的引擎若已被关闭（进程内重启 / reset_engine / 关闭流程）→ 丢弃并重新获取，
+    # 否则插件会一直操作一个已关闭的实例（表现为「引擎未初始化」且再也写不进去）
+    if _engine is not None and not _engine.is_ready():
+        _engine = None
     if _engine is None:
         try:
             import memory_engine
-            _engine = memory_engine.get_engine()
-            _engine.init()
+            _engine = memory_engine.get_engine()      # 不再隐式 init / 隐式写库
+            if not _engine.is_ready():
+                _engine.init()
             _apply_engine_config(ctx)
         except Exception as e:
             ctx.log("上下文记忆库初始化失败:", e)
@@ -73,14 +113,18 @@ def _apply_engine_config(ctx):
         pass
 
 
-def _maintain_loop(ctx):
+# ---------------- 后台治理线程（带明确状态机） ----------------
+def _maintain_loop(ctx, stop_event):
     """后台治理线程：按间隔执行 govern（归档 + 配额 + 原文保留 + FTS 重建）。"""
     import memory_engine.config as mecfg
     interval = mecfg.AUTO_MAINTAIN_INTERVAL
-    while not _maintain_stop.wait(interval):
+    with _maintain_lock:
+        if _maintain["state"] == "starting":
+            _maintain["state"] = "running"
+    while not stop_event.wait(interval):
         try:
             eng = _get_engine(ctx)
-            if eng is None:
+            if eng is None or not eng.is_active():
                 continue
             st = ctx.manager.get_settings(NAME)
             if not st.get("auto_maintain", True):
@@ -95,8 +139,73 @@ def _maintain_loop(ctx):
             if int(st.get("archive_retention") or 0) > 0:
                 overrides["archive_retention_quarters"] = int(st["archive_retention"])
             eng.govern(**overrides)
-        except Exception:
+            with _maintain_lock:
+                _maintain["runs"] += 1
+                _maintain["last_run"] = __import__("time").time()
+        except Exception as e:
+            with _maintain_lock:
+                _maintain["errors"] += 1
+                _maintain["last_error"] = str(e)
             traceback.print_exc()
+    with _maintain_lock:
+        # 收到停止信号 → stopped；非停止状态下退出 → failed（便于状态展示与排查）
+        _maintain["state"] = "stopped" if stop_event.is_set() else "failed"
+
+
+def _start_maintain(ctx):
+    """启动后台治理线程：先确认旧线程已真正结束，避免「旧线程还在退出 → 新线程不启动」。"""
+    with _maintain_lock:
+        thread = _maintain.get("thread")
+        if _maintain["state"] == "running" and thread is not None and thread.is_alive():
+            return
+        if thread is not None:
+            _maintain["state"] = "stopping"
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=5.0)
+        if thread.is_alive():
+            ctx.log("上下文记忆库：旧后台治理线程仍在退出中（已等待 5 秒），本次复用它")
+            with _maintain_lock:
+                _maintain["state"] = "running"
+            return
+    with _maintain_lock:
+        _maintain["state"] = "running"
+        _maintain["stop"] = threading.Event()
+        _maintain["thread"] = threading.Thread(
+            target=_maintain_loop, args=(ctx, _maintain["stop"]),
+            daemon=True, name="memory-maintain")
+        _maintain["thread"].start()
+
+
+def _stop_maintain(timeout: float = 5.0) -> bool:
+    """停止后台治理线程并等待其真正退出（不依赖 daemon 自动结束）。"""
+    with _maintain_lock:
+        stop_event = _maintain.get("stop")
+        thread = _maintain.get("thread")
+        _maintain["state"] = "stopping"
+        _maintain["stop"] = None
+    if stop_event is not None:
+        stop_event.set()
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=timeout)
+    alive = bool(thread is not None and thread.is_alive())
+    with _maintain_lock:
+        _maintain["thread"] = None
+        _maintain["state"] = "stopping" if alive else "stopped"
+    return not alive
+
+
+def maintain_state() -> dict:
+    """后台治理线程状态快照（供 Web UI 运行状态展示）。"""
+    with _maintain_lock:
+        thread = _maintain.get("thread")
+        return {
+            "state": _maintain["state"],
+            "alive": bool(thread is not None and thread.is_alive()),
+            "errors": _maintain["errors"],
+            "runs": _maintain["runs"],
+            "last_run": _maintain["last_run"],
+            "last_error": _maintain["last_error"],
+        }
 
 
 def on_load(settings, ctx):
@@ -111,47 +220,65 @@ def on_load(settings, ctx):
         mecfg.STALE_CONTEXT_TIMEOUT = 30 * 60
     eng = _get_engine(ctx)
     if eng is not None:
+        mode = settings.get("context_mode", "readwrite")
+        first_load = not eng.is_run_started()
+        # 1) 注册门禁（解除挂起 + 下发模式），核心对话路径立刻恢复可用
         try:
-            eng.set_mode(settings.get("context_mode", "readwrite"))
+            _service().register(eng, mode)
+        except Exception:
+            pass
+        try:
+            eng.resume(mode)
         except Exception:
             pass
         try:
             eng.set_debug(bool(settings.get("debug", False)) or bool(getattr(config, "DEBUG_MODE", False)))
         except Exception:
             pass
-        try:
-            eng.maybe_rebuild_fts()   # 每日一次的 FTS5 增量重建
-        except Exception:
-            pass
-        try:
-            eng.on_run_start()        # 运行开始：清理 L0 残留 + 存储治理
-        except Exception:
-            pass
-    # 启动后台治理线程（仅一次）
-    global _maintain_stop, _maintain_thread
-    if _maintain_thread is None or not _maintain_thread.is_alive():
-        import threading
-        _maintain_stop = threading.Event()
-        _maintain_thread = threading.Thread(
-            target=_maintain_loop, args=(ctx,), daemon=True, name="memory-maintain")
-        _maintain_thread.start()
+        # 2) 只有「首次加载」才做运行开始清理：
+        #    热重载 / 停用后重新启用时保留 L0 会话上下文，不丢用户正在进行的对话
+        if first_load:
+            try:
+                eng.maybe_rebuild_fts()   # 每日一次的 FTS5 增量重建
+            except Exception:
+                pass
+            try:
+                eng.on_run_start()        # 运行开始：清理 L0 残留 + 存储治理
+            except Exception:
+                pass
+            try:
+                eng.mark_run_started()
+            except Exception:
+                pass
+        else:
+            ctx.log("上下文记忆库：热重载 / 重新启用，保留引擎与 L0 会话上下文，跳过运行开始清理")
+    # 启动后台治理线程（状态机保证停用后再次启用一定会有线程在跑）
+    _start_maintain(ctx)
 
 
 def on_unload(ctx):
-    global _engine, _maintain_stop
-    if _maintain_stop is not None:
-        _maintain_stop.set()
-        _maintain_stop = None
-    if _engine is not None:
+    """停用 / 重载：停止后台线程 + 注销门禁（挂起引擎），保留引擎实例与数据、L0 上下文。
+
+    与旧实现的关键区别：不再 engine.close() + on_run_end()，因此
+      · 任意 reload 都不会销毁会话上下文（L0 保留）；
+      · 停用后核心检索与写入立即停止（service 门禁 + 引擎挂起双重保证）；
+      · 再次启用无缝恢复，无需重新打开数据库；
+      · 进行中的对话不会与「关闭中的数据库」竞争。
+    进程退出时的真正关闭由统一 shutdown 流程（service.shutdown → engine.close）负责。
+    """
+    reason = getattr(ctx, "unload_reason", "") or "unload"
+    _stop_maintain()
+    eng = _engine
+    if eng is not None:
         try:
-            _engine.on_run_end()      # 运行结束：销毁 L0 + 存储治理
+            eng.drain_archives(timeout=2.0)   # 停用前把已排队回合写完（此后不再接受新写入）
         except Exception:
             pass
         try:
-            _engine.close()
+            _service().unregister("记忆插件已停用" if reason == "disable" else "记忆插件重载中")
         except Exception:
             pass
-        _engine = None
+    ctx.log(f"上下文记忆库已卸载（原因：{reason}）：引擎挂起，数据与 L0 会话上下文保留")
 
 
 def on_settings_changed(settings, ctx):
@@ -166,7 +293,10 @@ def on_settings_changed(settings, ctx):
         mecfg.STALE_CONTEXT_TIMEOUT = 30 * 60
     try:
         eng = _get_engine(ctx)
-        eng.set_mode(settings.get("context_mode", "readwrite"))
+        mode = settings.get("context_mode", "readwrite")
+        eng.set_mode(mode)
+        # 模式变化必须同步到门禁：readonly 由引擎底层强制，而不只是插件设置里的一行字
+        _service().set_mode(mode)
         eng.set_debug(bool(settings.get("debug", False)) or bool(getattr(config, "DEBUG_MODE", False)))
     except Exception:
         pass
@@ -207,7 +337,8 @@ def settings_schema():
               "desc": "旧记忆在归档区放多久后会合并成一条季度总览（同一季度的多条记成一条）。合并后仍能检索到，只是细节变少。0 = 用默认值（12 个季度，约三年）。", "type": "number"},
          ],
          "actions": [
-             {"name": "view_memory", "label": "查看 / 管理记忆", "desc": "在新页面按层级查看全部记忆，支持关键词 / 日期查询，可手动编辑、新增、删除"},
+             {"name": "view_memory", "label": "查看 / 管理记忆", "desc": "在当前界面上弹出管理窗口：按层级查看全部记忆（L0/L1/L2/L3），支持关键词 / 日期查询，可手动新增、编辑、删除"},
+             {"name": "clear_l0", "label": "清理 L0 对话缓存", "desc": "一键清空 L0 会话缓存（最近对话）与 L1 检索热缓存，并丢弃尚未归档的任务，避免旧内容继续参与后续对话；长期记忆（L2 活跃 / 归档、L3 原文）不受影响"},
              {"name": "tidy_memory", "label": "上下文整理（归档 / 去重 / 分类）", "desc": "立即执行一次归档整理：季度归档、近似重复合并、分类索引重建（数据只降级不删除）"},
              {"name": "reset_memory", "label": "记忆初始化（清空全部记忆）", "desc": "二级确认：先弹风险警告，选择“是”后才执行删除"},
          ]},
@@ -225,10 +356,28 @@ def on_action(action, ctx):
     if eng is None:
         return {"reply": "记忆库不可用。", "speak": False}
     if action == "view_memory":
-        # 打开记忆管理页面（新页面显示，按层级快速定位 + 查询 + 编辑增删）
-        return {"page": "/memory_view.html", "speak": False}
+        # 打开记忆管理浮层窗口（在设置页上直接弹出，按层级查看 + 查询 + 编辑增删，
+        # 不再单独打开一个页面）；浮层由前端注册的 XLLB_MODALS.memory_manager 提供
+        return {"modal": "memory_manager", "speak": False}
     if action == "inspect_caches":
         return {"reply": _cache_report(eng), "speak": False}
+    if action == "clear_l0":
+        # 一键清理对话缓存：L0 会话缓存（最近对话）+ L1 检索热缓存 + 待归档队列。
+        # 引擎内部会递增会话代次并丢弃尚未开始的归档任务，避免「刚清完又被旧任务写回」。
+        # 长期记忆（L2 活跃 / 归档、L3 原文）完全不动。
+        try:
+            l0_before = eng.l0.size() if eng.l0 else 0
+            l1_before = eng.l1.size() if eng.l1 else 0
+            eng.clear_context()
+            l0_after = eng.l0.size() if eng.l0 else 0
+            l1_after = eng.l1.size() if eng.l1 else 0
+            return {"reply": (
+                "对话缓存已清理（长期记忆不受影响）：\n"
+                f"· L0 会话缓存：{l0_before} → {l0_after} 条\n"
+                f"· L1 检索热缓存：{l1_before} → {l1_after} 项\n"
+                "· 尚未归档的任务已丢弃，旧内容不会再参与后续对话。"), "speak": False}
+        except Exception as e:
+            return {"reply": f"清理对话缓存失败：{e}", "speak": False}
     if action == "tidy_memory":
         # 一键上下文整理：季度归档 + 配额降级 + 近似重复合并 + 分类索引重建（数据只降级不删除）
         try:
@@ -250,12 +399,17 @@ def on_action(action, ctx):
             return {"reply": f"上下文整理失败：{e}", "speak": False}
     if action == "reset_memory":
         # 第一步：仅返回风险警告（由前端弹窗展示“是/否”选项，选“是”后调用 reset_memory_do）
-        return {"reply": _RESET_WARNING, "confirm": "reset_memory_do", "speak": False}
+        # 服务端会为这次确认签发一次性令牌，第二步必须带令牌才能执行（前端弹窗不作为权限控制）
+        return {"reply": _RESET_WARNING, "confirm": "reset_memory_do",
+                "confirm_target": NAME, "speak": False}
     if action == "reset_memory_do":
         try:
             r = eng.initialize_memory()
+            if not r.get("ok"):
+                return {"reply": f"记忆初始化被拒绝：{r.get('message') or '当前状态不允许'}", "speak": False}
+            extra = f"，另有 {r['dropped_pending']} 条待归档任务被丢弃" if r.get("dropped_pending") else ""
             return {"reply": ("记忆初始化完成：已删除全部记忆"
-                              f"（活跃 {r.get('active', 0)} 条 / 归档 {r.get('archive', 0)} 条 + 冷存储原文）。"),
+                              f"（活跃 {r.get('active', 0)} 条 / 归档 {r.get('archive', 0)} 条 + 冷存储原文{extra}）。"),
                     "speak": False}
         except Exception as e:
             return {"reply": f"记忆初始化失败：{e}", "speak": False}
@@ -365,6 +519,9 @@ def on_command(command, args, ctx):
             return {"reply": (f"已入库：{r.fragment_id}\n主题：{r.main_topic}｜{r.year}/{r.quarter}\n"
                               f"参与者：{'、'.join(r.participants) if r.participants else '无'}\n"
                               f"L3：{r.l3_ref}"), "speak": False}
+        except WriteBlocked as e:
+            # 引擎底层门禁（插件停用 / 只读模式 / 无权限）：如实反馈，不静默写库
+            return {"reply": f"未入库：{e.reason}", "speak": False}
         except Exception as e:
             return {"reply": f"入库失败：{e}", "speak": False}
 
@@ -502,22 +659,38 @@ def _usage_text(u) -> str:
 
 
 def get_state(ctx):
-    """插件管理页展示：记忆库统计。"""
+    """设置页「运行状态」展示：门禁状态（插件 / 模式 / 可否读写）+ 记忆库统计 + 后台线程状态。"""
     eng = _get_engine(ctx)
-    queue = []
-    if eng is None:
-        queue = [{"index": 1, "title": "记忆库未初始化", "status": ""}]
-    else:
+    try:
+        st_service = _service().status()
+    except Exception:
+        st_service = {}
+    mode_txt = "完整权限（写入长期记忆）" if st_service.get("mode") == "readwrite" else "只读（仅本次会话上下文）"
+    items = [
+        f"插件状态：{'已启用' if st_service.get('plugin_enabled') else '已停用'}"
+        f"｜引擎：{'运行中' if st_service.get('active') else '已挂起'}",
+        f"上下文模式：{mode_txt}",
+        f"可写长期记忆：{'是' if st_service.get('can_write') else '否'}"
+        f"｜可管理（增删改）：{'是' if st_service.get('can_manage') else '否'}",
+    ]
+    ms = maintain_state()
+    state_txt = {"running": "运行中", "starting": "启动中", "stopping": "停止中",
+                 "stopped": "已停止", "failed": "异常退出"}.get(ms.get("state"), ms.get("state"))
+    items.append(f"后台自动整理：{state_txt}（已完成 {ms.get('runs', 0)} 次，异常 {ms.get('errors', 0)} 次）")
+    if ms.get("last_error"):
+        items.append(f"最近异常：{ms['last_error'][:60]}")
+    if eng is not None and eng.is_ready():
         try:
             st = eng.status()
-            items = [
-                f"活跃片段 {st['active_count']} 条",
-                f"归档片段 {st['archive_count']} 条",
-                f"向量 {st['vector_count']} 条",
-                f"L1 缓存 {st['cache_size']} 项",
-                f"L3 分区 {len(st['l3_partitions'])} 个",
+            items += [
+                f"活跃片段 {st['active_count']} 条｜归档片段 {st['archive_count']} 条",
+                f"向量 {st['vector_count']} 条｜L1 缓存 {st['cache_size']} 项",
+                f"L3 分区 {len(st['l3_partitions'])} 个｜待归档任务 {st.get('pending_archives', 0)} 条",
+                f"会话代次 {st.get('generation', 0)}｜数据目录 {st.get('data_dir', '')}",
             ]
-            queue = [{"index": i + 1, "title": t, "status": ""} for i, t in enumerate(items)]
         except Exception:
-            queue = [{"index": 1, "title": "状态读取失败", "status": ""}]
-    return {"queue": queue, "saved": False}
+            items.append("记忆库统计读取失败")
+    else:
+        items.append("记忆库未初始化")
+    queue = [{"index": i + 1, "title": t, "status": ""} for i, t in enumerate(items)]
+    return {"queue": queue, "saved": False, "gate": st_service, "maintain": ms}

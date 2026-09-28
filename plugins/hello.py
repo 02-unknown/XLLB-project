@@ -2,7 +2,7 @@
 NAME = "示例问候"
 VERSION = "1.0.0"
 DESCRIPTION = "演示插件：说“你好啊”或输入 /hello 会得到问候"
-AUTHOR = "官方"
+AUTHOR = "02"
 OFFICIAL = True
 HOT_SWAP = True
 

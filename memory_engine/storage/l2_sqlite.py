@@ -310,6 +310,47 @@ class SqliteIndex:
             for r in rows:
                 yield dict(r)
 
+    def query_rows(self, text: str = "", ts_from=None, ts_to=None, limit: int = 200, offset: int = 0):
+        """按「关键词 + 时间范围」分页查询片段（管理页展示用，SQL 侧过滤 + 分页）。
+
+        此前管理页是 `iter_rows()` 全表拉取再到 Python 侧过滤：记忆一多（几万条）就会
+        一次性扫全库并把全部数据塞进前端 DOM，表现为「打开管理页/滚动很卡」。这里改为：
+          · 关键词 → SQL LIKE（检索文本 + 语义核心，与页面语义一致）；
+          · 时间 → SQL 时间窗；
+          · LIMIT/OFFSET 分页 + COUNT 总数。
+        返回 (rows, total)：rows 为 dict 列表（同 iter_rows 结构）。
+        """
+        text = str(text or "").strip()
+        where, params = [], []
+        if text:
+            like = f"%{text}%"
+            where.append("(searchable_text LIKE ? OR full_summary LIKE ?)")
+            params.extend([like, like])
+        if ts_from is not None:
+            where.append("ts >= ?")
+            params.append(ts_from)
+        if ts_to is not None:
+            where.append("ts < ?")
+            params.append(ts_to)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        limit = max(1, int(limit))
+        offset = max(0, int(offset))
+        with self._lock:
+            total = int(self.conn.execute(
+                f"SELECT COUNT(*) FROM fragments{clause}", params).fetchone()[0])
+            rows = self.conn.execute(
+                f"SELECT * FROM fragments{clause} ORDER BY ts DESC LIMIT ? OFFSET ?",
+                params + [limit, offset]).fetchall()
+        return [dict(r) for r in rows], total
+
+    def page_rows(self, limit: int = 200, offset: int = 0, order: str = "ts_desc"):
+        """分页读取片段（无过滤条件时使用）。返回 (rows, total)。"""
+        return self.query_rows(limit=limit, offset=offset)
+
+    def search_rows(self, text: str, limit: int = 200, offset: int = 0):
+        """按关键词分页检索片段。返回 (rows, total)。"""
+        return self.query_rows(text=text, limit=limit, offset=offset)
+
     def partition_ids(self) -> dict:
         """返回 {(year, quarter, topic): [ids]}，供整理分组。"""
         with self._lock:

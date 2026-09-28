@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# setup/install.py —— 小笼洛包 1.3 安装部署程序（可反复运行，用于补装缺失组件）。
+# setup/install.py —— 小笼洛包安装部署程序（可反复运行，用于补装缺失组件）。
 # 功能：
 #   0) 本地大模型 Ollama（可选：不装则只能通过外部 API 调用大模型）；
 #   1) 检查并安装 Python 依赖（优先使用项目 venv）；
@@ -28,6 +28,19 @@ for _stream in (sys.stdout, sys.stderr):
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENV_DIR = os.path.join(PROJECT_ROOT, "venv")
+
+
+def read_version():
+    """版本号统一来自项目根目录的 version.txt（安装程序独立运行，不依赖 core 包）。"""
+    try:
+        with open(os.path.join(PROJECT_ROOT, "version.txt"), encoding="utf-8-sig") as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip().lstrip("vV").strip()
+                if line:
+                    return line
+    except OSError:
+        pass
+    return "unknown"
 VENV_PY = os.path.join(VENV_DIR, "Scripts", "python.exe")
 REQ_FILE = os.path.join(PROJECT_ROOT, "requirements.txt")
 WHISPER_DIR = os.path.join(PROJECT_ROOT, "models", "whisper")
@@ -324,7 +337,7 @@ def module_ffmpeg():
 
 def main():
     print("=" * 52)
-    print("  小笼洛包 1.3 · 安装部署")
+    print(f"  小笼洛包 {read_version()} · 安装部署")
     print("=" * 52)
     print(f"项目根目录：{PROJECT_ROOT}")
 
@@ -360,7 +373,8 @@ def main():
         print("  安装流程结束。尚未安装：", "、".join(missing))
         print("  说明：可稍后重新运行本程序进行补装；缺失项对应的功能将不可用。")
     print("=" * 52)
-    print("下一步：双击项目根目录的 start.bat（或运行 venv\\Scripts\\python.exe launcher.py）启动。")
+    print("下一步：双击项目根目录的 启动.vbs（或 start.bat）启动图形界面；"
+          "需要看完整输出时可运行 venv\\Scripts\\python.exe launcher.py。")
 
 
 if __name__ == "__main__":

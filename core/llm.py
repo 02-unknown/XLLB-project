@@ -159,10 +159,44 @@ def _openai_chat(messages, model, temperature, num_predict, stop, base="", key="
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     resp = requests.post(base + "/chat/completions", json=payload, headers=headers, timeout=90)
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        raise RuntimeError(_http_error_detail(resp, model, base))
     data = resp.json()
     choices = data.get("choices") or [{}]
     return (choices[0].get("message") or {}).get("content", "").strip()
+
+
+def _http_error_detail(resp, model, base=""):
+    """把外部 API 的错误响应整理成可执行的中文提示（400 多为模型名不受支持）。"""
+    detail = ""
+    try:
+        body = resp.json()
+        err = body.get("error")
+        if isinstance(err, dict):
+            detail = err.get("message") or err.get("code") or ""
+        elif isinstance(err, str):
+            detail = err
+        if not detail:
+            detail = body.get("message") or ""
+    except Exception:
+        detail = (resp.text or "")[:200]
+    detail = str(detail).strip()[:200]
+    hint = ""
+    if resp.status_code == 400:
+        # 不针对某家服务限定模型名：各家的可用模型不一样，这里只说明"请求被接口拒绝"
+        hint = ("；API 无法访问（请求被该接口拒绝）：请检查「设置 → 插件设置 → 模型与自动调优」里的 "
+                "API 地址、模型名与 API Key 是否与该服务匹配，以及网络是否可达")
+    elif resp.status_code == 401:
+        hint = "；API Key 无效或未配置"
+    elif resp.status_code == 402:
+        hint = "；账户余额不足"
+    elif resp.status_code == 403:
+        hint = "；Key 无权访问该模型"
+    elif resp.status_code == 429:
+        hint = "；触发频率 / 额度限制，稍后再试"
+    elif resp.status_code >= 500:
+        hint = "；对方服务端错误，稍后再试"
+    return f"HTTP {resp.status_code} {detail}{hint}（model={model} base={base}）"
 
 
 def _raw_chat(messages, model, backend, temperature, num_predict, stop, base="", key=""):
@@ -217,10 +251,14 @@ def generate(prompt, model=None, num_predict=64, temperature=0.0, stop=("\n", "�
 
 # ==================== 主对话 ====================
 def _get_memory_engine():
-    """惰性获取记忆引擎（不可用时返回 None，调用方回退旧上下文模式）。"""
+    """惰性获取记忆引擎（不可用 / 记忆插件停用时返回 None，调用方回退旧上下文模式）。
+
+    统一走记忆服务门禁：插件停用、引擎挂起、未初始化都不会返回引擎，
+    因此「关闭记忆插件后核心聊天仍写入长期记忆」的情况不会再出现。
+    """
     try:
-        from memory_engine import get_engine
-        return get_engine()
+        from memory_engine import service as mem_service
+        return mem_service.get_engine_for_read()
     except Exception:
         return None
 
@@ -295,7 +333,7 @@ def call_ollama(user_message, extra_context="", record=True, use_context=True):
     system_prompt = build_system_prompt(config.character_name, current_influence)
 
     engine = _get_memory_engine()
-    engine_ok = engine is not None and engine.is_ready()
+    engine_ok = engine is not None and engine.is_active()   # 插件停用 / 挂起 → False
 
     if engine_ok and use_context:
         ctx = engine.assemble_context(user_message, role=config.character_name)

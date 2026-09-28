@@ -6,7 +6,7 @@ import re
 NAME = "记事本"
 VERSION = "1.0.0"
 DESCRIPTION = "让助手记住事情：说“记住 …”或“我记了什么”，或 /memo"
-AUTHOR = "官方"
+AUTHOR = "02"
 OFFICIAL = True
 HOT_SWAP = True
 

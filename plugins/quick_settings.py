@@ -5,7 +5,7 @@ from core import storage
 NAME = "快捷设置"
 VERSION = "1.0.0"
 DESCRIPTION = "快速切换联网、清空对话：说“关闭联网”或 /net、/clear"
-AUTHOR = "官方"
+AUTHOR = "02"
 OFFICIAL = True
 HOT_SWAP = True
 

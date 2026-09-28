@@ -3,30 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>插件管理 - 小笼洛包 1.7</title>
+  <title>已迁移到设置页 - 小笼洛包</title>
+  <meta http-equiv="refresh" content="0; url=/settings.html#plugins" />
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/app-icon.png" />
+  <link rel="shortcut icon" href="/static/favicon.ico" />
   <link rel="stylesheet" href="/static/style.css" />
-  <style>
-    /* 插件管理页：全宽列表，不被设置侧栏约束 */
-    .plugins-page { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; }
-    .plugins-page-inner { max-width: 860px; margin: 0 auto; }
-    .plugins-page .plugin-list { max-height: none; }
-    .back-link { text-decoration: none; }
-  </style>
 </head>
 <body>
-  <header class="topbar">
-    <a class="btn ghost back-link" href="/">← 返回</a>
-    <span class="brand"><span class="logo">🔌</span><span class="title">插件管理</span></span>
-    <div class="status-bar" id="status-bar"></div>
-    <button class="btn" id="btn-plugins-reload">重新加载插件</button>
-  </header>
+  <!-- 插件管理已并入统一「设置」页：旧链接自动跳转，避免出现第二个入口 -->
   <main class="layout">
-    <section class="plugins-page">
-      <div class="plugins-page-inner">
-        <div class="plugin-list" id="plugin-list"></div>
+    <section class="page">
+      <div class="page-inner">
+        <div class="page-note">插件管理已并入「设置」页，正在跳转…</div>
+        <p><a class="btn primary" href="/settings.html#plugins">前往设置</a></p>
       </div>
     </section>
   </main>
-  <script src="/static/plugins.js"></script>
+  <script>location.replace("/settings.html#plugins");</script>
 </body>
 </html>

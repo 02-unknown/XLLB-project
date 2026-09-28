@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>设置 - 小笼洛包</title>
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/app-icon.png" />
+  <link rel="shortcut icon" href="/static/favicon.ico" />
+  <link rel="apple-touch-icon" href="/static/app-icon.png" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/app_lifecycle.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn ghost back-link" href="/"
+       onclick="window.XLLB_NAV &amp;&amp; window.XLLB_NAV.allow()">← 返回对话</a>
+    <span class="brand"><span class="title">设置</span></span>
+    <div class="status-bar" id="status-bar"></div>
+  </header>
+  <main class="layout">
+    <section class="settings-page">
+      <div class="settings-page-inner">
+        <!-- 左侧：分类标签（内置分类 + 插件声明的标签） -->
+        <aside class="settings-nav" id="settings-nav"></aside>
+        <!-- 右侧：当前标签下的具体内容 -->
+        <section class="settings-main">
+          <div class="settings-main-head">
+            <div class="sm-title" id="settings-tab-title">设置</div>
+            <div class="sm-desc" id="settings-tab-desc"></div>
+          </div>
+          <div class="settings-main-body" id="settings-body"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <!-- 记忆管理浮层（注册到 XLLB_MODALS.memory_manager，供插件动作 {"modal": ...} 调用） -->
+  <script src="/static/memory_view.js"></script>
+  <script src="/static/settings.js"></script>
+</body>
+</html>

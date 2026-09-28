@@ -11,26 +11,33 @@ import os
 import memory_engine.config as cfg
 
 _LOGGER_NAME = "memory_engine"
-_configured = False
+_handlers = {}          # log_file 路径 -> FileHandler（每个数据目录一个，实例隔离）
 _debug = False
 
 
-def _ensure():
-    global _configured
-    if _configured:
-        return
+def configure(log_file: str = None) -> str:
+    """把日志输出绑定到指定文件（引擎按实例的数据目录调用，测试目录不会写进生产日志）。"""
+    path = os.path.abspath(log_file or cfg.LOG_FILE)
     logger = logging.getLogger(_LOGGER_NAME)
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
+    if path in _handlers:
+        return path
     try:
-        os.makedirs(os.path.dirname(cfg.LOG_FILE) or ".", exist_ok=True)
-        fh = logging.FileHandler(cfg.LOG_FILE, encoding="utf-8")
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        fh = logging.FileHandler(path, encoding="utf-8")
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         logger.addHandler(fh)
+        _handlers[path] = fh
     except Exception:
         pass
-    _configured = True
+    return path
+
+
+def _ensure():
+    if not _handlers:
+        configure(cfg.LOG_FILE)
 
 
 def set_debug(enabled: bool) -> None:
@@ -71,4 +78,6 @@ def warn(msg: str) -> None:
 
 
 def log_file() -> str:
+    if _handlers:
+        return list(_handlers)[-1]
     return cfg.LOG_FILE

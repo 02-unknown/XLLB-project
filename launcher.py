@@ -1,5 +1,5 @@
 # launcher.py
-# 小笼洛包 1.7 启动器（合并网页版与桌面版）。
+# 小笼洛包启动器（合并网页版与桌面版）；版本号见根目录 version.txt。
 # 启动时依次选择：
 #   1. 界面方式：桌面版（内嵌窗口，需 pywebview）/ 网页版（浏览器）
 #   2. 运行模式：Lite（仅加载语音合成，大模型只能用外部 API）/
@@ -28,8 +28,12 @@ CRITICAL_PATHS = [
     "plugins",
     "web",
     os.path.join("web", "index.html"),
+    os.path.join("web", "settings.html"),
+    os.path.join("web", "launcher.html"),
     os.path.join("web", "static"),
     "requirements.txt",
+    "launcher_gui.py",
+    "version.txt",
 ]
 # 关键 Python 依赖（缺失则无法运行）
 CRITICAL_DEPENDENCIES = ["requests", "numpy", "yt_dlp"]
@@ -39,8 +43,12 @@ def _log_dir():
     return os.path.join(PROJECT_ROOT, "runtime", "logs")
 
 
-def _preflight():
-    """关键组件预检：缺失时提示运行安装程序并终止，绝不自动安装。"""
+def check_components():
+    """关键组件预检（只检查、不退出）：返回缺失项列表，供控制台与图形启动器共用。
+
+    图形启动器在进程内运行，不能因为缺组件就直接 sys.exit（会把整个程序杀掉），
+    所以这里把「检查」与「退出」拆开：图形启动器把缺失项作为失败步骤展示。
+    """
     missing = []
     for rel in CRITICAL_PATHS:
         if not os.path.exists(os.path.join(PROJECT_ROOT, rel)):
@@ -50,6 +58,12 @@ def _preflight():
             importlib.import_module(dep)
         except Exception:
             missing.append(f"依赖模块 {dep}")
+    return missing
+
+
+def _preflight():
+    """关键组件预检：缺失时提示运行安装程序并终止，绝不自动安装。"""
+    missing = check_components()
     if missing:
         print("检测到关键组件缺失：")
         for item in missing:
@@ -108,38 +122,66 @@ def _choose_mode():
     return "lite" if key == "1" else "standard"
 
 
-def _start_services(mode, services, models, cfg):
-    """按模式启动外部服务。"""
+def apply_mode_and_start(mode, services_mod, models_mod, cfg=None):
+    """按模式拉起服务（控制台启动器与图形启动器共用同一套逻辑）。
+
+    mode="lite"     —— 只启动语音合成（GPT-SoVITS），不启动 Ollama、不加载 Whisper；
+    mode="standard" —— 启动全部本地服务（Ollama + GPT-SoVITS，Whisper 后台加载）。
+    返回 True 表示已按模式拉起（不等待模型加载完成）。
+    """
+    if cfg is None:
+        cfg = services_mod.load_launcher_config()
     if mode == "lite":
         import core.config as config
         print("已选择 Lite 模式：仅加载语音合成（GPT-SoVITS）。")
         print("提示：Lite 模式不启动 Ollama、不加载 Whisper，")
         print("      大模型只能使用外部 API（OpenAI 兼容接口）。")
         print("      请在 WebUI「设置 → 插件管理 → 模型与自动调优」确认 API 地址与 Key。")
-        # 强制大模型走外部 API（插件加载后可能按设置覆盖，故在此再次强制）；
-        # 清空生成模型名，避免界面显示本机 Ollama 模型名造成误导（配置外部模型后自动显示）
+        # 强制大模型走外部 API：Lite 模式没有本地 Ollama，后端必须是外部接口。
+        # 但「模型与自动调优」插件里已保存的模型名 / API 地址必须沿用（上次设置下次启动继续生效），
+        # 所以这里只在「后端还没被设置成外部接口」时才覆盖，且不再清空已配置的模型名
+        # （此前无条件清空，导致用户在设置里填好的模型名每次启动都被抹掉）。
         config.APP_MODE = "lite"
-        config.LLM_CHAT_BACKEND = "openai"
-        config.LLM_JUDGE_BACKEND = "openai"
-        config.LLM_CHAT_MODEL = ""
-        started_gs = services.start_gpt_sovits(cfg)
+        if config.LLM_CHAT_BACKEND != "openai":
+            config.LLM_CHAT_BACKEND = "openai"
+        if config.LLM_JUDGE_BACKEND != "openai":
+            config.LLM_JUDGE_BACKEND = "openai"
+        if config.LLM_CHAT_MODEL == config.OLLAMA_MODEL:
+            # 尚未配置外部模型（还是 Ollama 默认名）：留空，界面显示"未配置"而不是误导性的本机模型名
+            config.LLM_CHAT_MODEL = ""
+        started_gs, gs_info = services_mod.start_gpt_sovits(cfg)
+        if gs_info.get("reason") == "exited":
+            print("[提示] GPT-SoVITS 启动失败，语音合成暂不可用；")
+            print("       可在 WebUI「设置 → 角色与语音」里点「重启语音服务」重试，或运行「诊断.bat」检查端口。")
         if started_gs:
             threading.Thread(
-                target=lambda: services.wait_ready(
-                    lambda: services.check_gpt_sovits(cfg),
+                target=lambda: services_mod.wait_ready(
+                    lambda: services_mod.check_gpt_sovits(),
                     cfg["gpt_sovits"].get("start_timeout", 60),
                     label="GPT-SoVITS API"),
                 daemon=True).start()
-    else:
-        import core.config as config
-        config.APP_MODE = "standard"
-        print("已选择标准模式：启动全部服务（Ollama + GPT-SoVITS + Whisper）。")
-        services.start_all()
-        threading.Thread(target=models.init_models, daemon=True).start()
+        return True
+    import core.config as config
+    config.APP_MODE = "standard"
+    print("已选择标准模式：启动全部服务（Ollama + GPT-SoVITS + Whisper）。")
+    services_mod.start_all()
+    threading.Thread(target=models_mod.init_models, daemon=True).start()
+    return True
 
 
-def _open_app_window(url):
-    """用 Edge / Chrome 的应用模式打开独立窗口（无浏览器工具栏、无标签页）。"""
+def _start_services(mode, services, models, cfg):
+    """兼容旧调用名（控制台启动器 / 验证脚本仍在使用）。"""
+    return apply_mode_and_start(mode, services, models, cfg)
+
+
+def _open_app_window(url, size=None, profile_dir=None):
+    """用 Edge / Chrome 的应用模式打开独立窗口（无浏览器工具栏、无标签页）。
+
+    size=(宽, 高) 可指定初始窗口尺寸（图形启动器用它把窗口直接开成正式界面的大小）；
+    profile_dir 指定独立的浏览器配置目录（这样启动出来的就是我们自己的窗口进程，
+    它退出即代表窗口关闭，后端据此做完整清理）。
+    返回 (是否成功, 进程对象或 None)。
+    """
     import os
     import subprocess
     candidates = [
@@ -148,21 +190,36 @@ def _open_app_window(url):
         r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
         r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
     ]
+    args_tail = []
+    if size:
+        try:
+            args_tail.append("--window-size=%d,%d" % (int(size[0]), int(size[1])))
+        except Exception:
+            args_tail = []
+    if profile_dir:
+        try:
+            os.makedirs(profile_dir, exist_ok=True)
+            args_tail += [f"--user-data-dir={profile_dir}", "--no-first-run",
+                          "--no-default-browser-check", "--disable-features=msEdgeWelcomePage"]
+        except Exception:
+            pass
     for template in candidates:
         exe = os.path.expandvars(template)
         if os.path.exists(exe):
             try:
-                subprocess.Popen([exe, "--app=" + url])
-                return True
+                proc = subprocess.Popen([exe, "--app=" + url] + args_tail)
+                return True, proc
             except Exception:
                 continue
-    return False
+    return False, None
 
 
 def _run_desktop(serve, config):
     """桌面版：优先内嵌 pywebview 窗口；失败则用 Edge/Chrome 应用模式
     独立窗口（Win10/11 自带，无需额外安装）；再失败回退普通浏览器。"""
     import time
+    # 版本号用于窗口标题（main() 里的导入是局部变量，这里必须自己导入）
+    from core import version
     # Web 服务放入后台线程；就绪后通过回调拿到实际地址（可能是随机兜底端口）
     holder = {}
 
@@ -190,7 +247,8 @@ def _run_desktop(serve, config):
     if webview is not None:
         print(f"正在打开桌面窗口：{url}")
         try:
-            webview.create_window("小笼洛包 1.7 桌面版", url,
+            # 窗口标题不带版本号：版本号统一在「设置 → 通用设置」查看（版本仍来自 version.txt）
+            webview.create_window(version.APP_NAME + " 桌面版", url,
                                   width=1280, height=820, resizable=True)
             webview.start()
             return
@@ -212,7 +270,8 @@ def _run_desktop(serve, config):
 
     # 2) Edge / Chrome 应用模式独立窗口
     print(f"正在打开桌面窗口（应用模式）：{url}")
-    if _open_app_window(url):
+    ok, _proc = _open_app_window(url)
+    if ok:
         # 保持进程存活（Web 服务在后台线程运行）；Ctrl+C 退出
         try:
             while True:
@@ -228,7 +287,7 @@ def _run_desktop(serve, config):
 
 def main():
     import core.config as config
-    from core import services, models, logger
+    from core import services, models, logger, version
     from web.server import serve
 
     logger.init_log(_log_dir())
@@ -237,7 +296,7 @@ def main():
     _preflight()
 
     print("=" * 50)
-    print("小笼洛包 1.7")
+    print(version.version_label())
     print("=" * 50)
     ui = _choose_ui()
     mode = _choose_mode()
@@ -273,6 +332,14 @@ if __name__ == "__main__":
             from core import logger
             logger.init_log(_log_dir())
             logger.error("主程序异常退出：\n" + traceback.format_exc())
+        except Exception:
+            pass
+    finally:
+        # 统一退出流程（可重复调用）：桌面窗口关闭 / Ctrl+C / 异常退出都会走到这里，
+        # 顺序为「停止新写入 → drain 归档队列 → 关闭记忆引擎 → 清理运行时临时文件」
+        try:
+            from core import shutdown as shutdown_mod
+            shutdown_mod.shutdown("launcher-exit")
         except Exception:
             pass
         sys.exit(1)
