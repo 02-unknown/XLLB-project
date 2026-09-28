@@ -13,7 +13,7 @@
 # 安全性：全程使用临时插件目录 runtime/reload_test_plugins，
 #         不触碰真实 plugins/、plugins_state.json、plugins_settings.json。
 #
-# 运行：<project-root>\venv\Scripts\python.exe <project-root>\verify_reload_semantics.py
+# 运行：venv\Scripts\python.exe tests\verify_reload_semantics.py
 import hashlib
 import os
 import shutil

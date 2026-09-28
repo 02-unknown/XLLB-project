@@ -7,7 +7,7 @@ import os
 import shutil
 import sys
 
-VERIFY_DIR = r"<project-root>\runtime\memory_engine_verify"
+VERIFY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runtime", "memory_engine_verify")
 shutil.rmtree(VERIFY_DIR, ignore_errors=True)
 os.environ["MEMORY_ENGINE_DATA"] = VERIFY_DIR
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -90,8 +90,8 @@ import sqlite3
 bad_words = ["业绩", "战略", "营收", "预算", "促销", "华东", "华南", "华北", "华中",
              "研发", "人事", "离职", "招聘", "扩张", "收缩", "销售额", "利润"]
 found = []
-for db_path in (r"<project-root>\runtime\memory_engine\active\memory.db",
-                r"<project-root>\runtime\memory_engine\archive\memory.db"):
+for db_path in (os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runtime", "memory_engine", "active", "memory.db"),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runtime", "memory_engine", "archive", "memory.db")):
     if not os.path.isfile(db_path):
         continue
     con = sqlite3.connect(db_path)

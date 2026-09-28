@@ -23,19 +23,27 @@ _USER_AGENT = (
 
 
 def _ffmpeg_location():
-    """返回 ffmpeg 路径：依次检查项目相对路径、系统 PATH、旧默认路径。"""
+    """返回 ffmpeg 路径：环境变量 → 项目内相对路径 → 系统 PATH → 本机配置文件里记录过的路径。"""
     import shutil
-    # 1) 项目内相对路径（便于打包）
+    # 1) 环境变量（部署时可用 XLLB_FFMPEG 指定）
+    env = (os.environ.get("XLLB_FFMPEG") or "").strip().strip('"')
+    if env and os.path.exists(env):
+        return env
+    # 2) 项目内相对路径（便于打包）
     if os.path.exists(config.FFMPEG_PATH):
         return config.FFMPEG_PATH
-    # 2) 系统 PATH
+    # 3) 系统 PATH
     p = shutil.which("ffmpeg")
     if p:
         return p
-    # 3) 旧默认路径（兼容已有部署）
-    legacy = r""
-    if os.path.exists(legacy):
-        return legacy
+    # 4) 用户在本机 launcher_config.json 里配置过的路径（不写死在代码里）
+    try:
+        from core import services
+        configured = ((services.load_launcher_config().get("ffmpeg") or {}).get("path") or "").strip().strip('"')
+        if configured and os.path.exists(configured):
+            return configured
+    except Exception:      # noqa: BLE001
+        pass
     return None
 
 

@@ -47,7 +47,8 @@ WHISPER_DIR = os.path.join(PROJECT_ROOT, "models", "whisper")
 RUNTIME_DIRS = [os.path.join(PROJECT_ROOT, "runtime", "tts"),
                 os.path.join(PROJECT_ROOT, "runtime", "music")]
 LAUNCHER_CFG = os.path.join(PROJECT_ROOT, "launcher_config.json")
-FFMPEG_DEFAULT = r""
+# ffmpeg 允许的查找位置：环境变量 / 项目内 / 系统 PATH（不写死任何本机路径）
+FFMPEG_ENV = "XLLB_FFMPEG"
 
 # 项目必需文件（缺失则视为项目不完整）
 ESSENTIAL = ["app.py", "launcher.py", "requirements.txt", "core", "web", "plugins"]
@@ -216,7 +217,10 @@ def check_tts_installed():
 
 
 def check_ffmpeg():
-    return bool(shutil.which("ffmpeg")) or os.path.exists(FFMPEG_DEFAULT)
+    """ffmpeg 是否可用：环境变量 XLLB_FFMPEG 指定的路径 / 项目内 ffmpeg\\bin / 系统 PATH。"""
+    env = (os.environ.get(FFMPEG_ENV) or "").strip().strip('"')
+    local = os.path.join(PROJECT_ROOT, "ffmpeg", "bin", "ffmpeg.exe")
+    return bool(shutil.which("ffmpeg")) or os.path.exists(local) or (bool(env) and os.path.exists(env))
 
 
 # ==================== 各模块（均先检测已安装，再手动确认） ====================

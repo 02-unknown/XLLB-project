@@ -8,7 +8,7 @@ import os
 import shutil
 import sys
 
-VERIFY_DIR = r"<project-root>\runtime\memory_engine_v14"
+VERIFY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runtime", "memory_engine_v14")
 shutil.rmtree(VERIFY_DIR, ignore_errors=True)
 os.environ["MEMORY_ENGINE_DATA"] = VERIFY_DIR
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,7 +18,7 @@ import memory_engine.config as cfg
 cfg.LLM_RECHECK_ENABLED = False
 
 import importlib.util
-spec = importlib.util.spec_from_file_location("plugins.memory", r"<project-root>\plugins\memory.py")
+spec = importlib.util.spec_from_file_location("plugins.memory", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugins", "memory.py"))
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 

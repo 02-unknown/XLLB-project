@@ -10,7 +10,7 @@ import os
 import shutil
 import sys
 
-VERIFY_DIR = r"<project-root>\runtime\memory_engine_av"
+VERIFY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runtime", "memory_engine_av")
 shutil.rmtree(VERIFY_DIR, ignore_errors=True)
 os.environ["MEMORY_ENGINE_DATA"] = VERIFY_DIR
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

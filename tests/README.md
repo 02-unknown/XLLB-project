@@ -19,7 +19,7 @@ venv\Scripts\python.exe tests\verify_voice_flow.py
 ```
 
 脚本内部一律用「本文件所在目录的上一级」当仓库根目录，因此**可以任意位置调用**，
-不依赖当前工作目录，也不再写死 `<project-root>`。
+不依赖当前工作目录，也不写死任何本机绝对路径。
 
 ## 主要脚本一览
 

@@ -12,7 +12,7 @@ import shutil
 import sys
 import time
 
-PERF_DIR = r"<project-root>\runtime\memory_engine_perf"
+PERF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runtime", "memory_engine_perf")
 shutil.rmtree(PERF_DIR, ignore_errors=True)
 os.environ["MEMORY_ENGINE_DATA"] = PERF_DIR
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

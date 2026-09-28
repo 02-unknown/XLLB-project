@@ -29,12 +29,37 @@ OLLAMA_TAGS_API = "http://localhost:11434/api/tags"
 GPT_SOVITS_API = "http://127.0.0.1:9880/tts"
 GPT_SOVITS_BASE = "http://127.0.0.1:9880"
 
-# 默认语音参数（会被预设覆盖）
-REF_AUDIO_PATH = os.path.join(
-    PROJECT_ROOT, "voice_presets", "voice_preset_a",
-    "my_voice.wav_0000000000_0000173120.wav",
-).replace("\\", "/")
-PROMPT_TEXT = ""
+# 默认语音参数（运行时会被「角色与语音」里选中的预设覆盖）
+# 出厂不写死任何音色：按环境变量 → 本机 voice_presets 下第一个可用预设（参考音频 + 对应 prompt.txt）推导。
+# 这样代码仓库里不会出现个人音色目录名 / 个人台词，换机器也能直接用本机已有的预设。
+def _default_voice_from_presets():
+    env = (os.environ.get("XLLB_REF_AUDIO") or "").strip().strip('"')
+    if env:
+        return env.replace("\\", "/"), (os.environ.get("XLLB_PROMPT_TEXT") or "").strip()
+    base = os.path.join(PROJECT_ROOT, "voice_presets")
+    try:
+        for name in sorted(os.listdir(base)):
+            folder = os.path.join(base, name)
+            if not os.path.isdir(folder):
+                continue
+            wavs = sorted(f for f in os.listdir(folder) if f.lower().endswith(".wav"))
+            if not wavs:
+                continue
+            prompt = ""
+            prompt_file = os.path.join(folder, "prompt.txt")
+            if os.path.exists(prompt_file):
+                try:
+                    with open(prompt_file, encoding="utf-8") as f:
+                        prompt = f.read().strip()
+                except OSError:
+                    prompt = ""
+            return os.path.join(folder, wavs[0]).replace("\\", "/"), prompt
+    except OSError:
+        pass
+    return "", ""
+
+
+REF_AUDIO_PATH, PROMPT_TEXT = _default_voice_from_presets()
 CURRENT_VOICE_NAME = "默认"
 GPT_WEIGHTS_PATH = ""
 SOVITS_WEIGHTS_PATH = ""
@@ -64,9 +89,10 @@ PLUGINS_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "plugins_settings.json")
 # ffmpeg 路径（相对项目根目录，便于打包；若不存在则回退到 PATH 或旧默认路径）
 FFMPEG_PATH = os.path.join(PROJECT_ROOT, "ffmpeg", "bin", "ffmpeg.exe")
 
-# 联网搜索（可通过“联网搜索设置”插件在 WebUI 配置）
+# 联网搜索（可通过“联网搜索设置”插件在 WebUI 配置；也可用环境变量 TAVILY_API_KEY 提供）
 SEARCH_PROVIDER = "tavily"      # tavily | bing（不推荐，无需Key） | custom
-TAVILY_API_KEY = ""   # 请替换
+# 出厂留空：请勿把真实 Key 提交到代码仓库；在设置页「联网搜索设置」里填写，或设置环境变量 TAVILY_API_KEY
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "").strip()
 TAVILY_MONTHLY_LIMIT = 1000
 SEARCH_CUSTOM_URL = ""          # 自定义搜索 API 地址（如 https://api.example.com/search）
 SEARCH_CUSTOM_KEY = ""          # 自定义搜索 API Key（可选）
